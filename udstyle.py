@@ -103,12 +103,16 @@ def analyze(filename):
 					* len(sent))))
 		for mdd, sent in zip(result['MDD'], sentences)]
 	# proportion of adjacent dependencies
+	# https://doi.org/10.1016/j.langsci.2016.09.006
 	result['ADJ'] = [mean(abs(line[ID] - line[HEAD]) == 1 for line in sent)
 			for sent in sentences]
 	# dependency direction: proportion of left dependents
+	# http://www.aclweb.org/anthology/W17-6508
 	result['LEFT'] = [mean(line[ID] < line[HEAD] for line in sent)
 			for sent in sentences]
 	# nominal modifiers;
+	# attempt to measures phrasal complexity (instead of clausal complexity).
+	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
 	result['MOD'] = [mean(line[DEPREL] == 'nmod' for line in sent)
 			for sent in sentences]
 	return result
