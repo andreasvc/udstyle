@@ -111,7 +111,7 @@ def analyze(filename):
 	result['LEFT'] = [mean(line[ID] < line[HEAD] for line in sent)
 			for sent in sentences]
 	# nominal modifiers;
-	# attempt to measures phrasal complexity (instead of clausal complexity).
+	# attempt to measure phrasal complexity (as opposed to clausal complexity).
 	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
 	result['MOD'] = [mean(line[DEPREL] == 'nmod' for line in sent)
 			for sent in sentences]
@@ -124,6 +124,8 @@ def compare(filenames):
 	for each metric in the colmuns."""
 	# This only reports the mean for each feature, you might want to look at
 	# standard deviation and other aspects of the distribution.
+	# This gives a macro average over the per-sentence scores.
+	# TODO: should offer micro average as well.
 	return pandas.DataFrame({
 			os.path.basename(filename):
 				pandas.DataFrame(analyze(filename)).mean()
