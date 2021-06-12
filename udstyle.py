@@ -1,6 +1,15 @@
 """Compute complexity metrics from Universal Dependencies.
 
-Usage: python3 udstyle.py <FILENAMES>
+Usage: python3 udstyle.py [OPTIONS] FILE...
+  --parse=LANG          parse texts with Stanza; provide 2 letter language code
+  --output=FILENAME     write result to a tab-separated file.
+Reported metrics:
+  - LEN:  mean sentence length in words (excluding punctuation).
+  - MDD:  mean dependency distance (Gibson, 1998).
+  - NDD:  normalized dependency distance (Lei & Jockers, 2018).
+  - ADJ:  proportion of adjacent dependencies.
+  - LEFT: dependency direction: proportion of left dependents.
+  - MOD:  nominal modifiers (Biber & Gray, 2010).
 Example:
 $ python3 udstyle.py UD_Dutch-LassySmall/*.conllu
                                   LEN    MDD    NDD    ADJ   LEFT    MOD
@@ -10,9 +19,11 @@ nl_lassysmall-ud-train.conllu  11.027  2.172  0.775  0.564  0.391  0.072
 """
 import os
 import sys
+import getopt
 from math import log, sqrt
 import pandas
-# TODO: optionally use StanfordNLP to parse texts for user
+# TODO: extract POS and syntactic n-grams frequencies
+# TODO: POS surprisal, requires training e.g. n-gram model on corpus
 
 # Constants for field numbers:
 ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC = range(10)
@@ -32,6 +43,29 @@ ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC = range(10)
 #         defined language-specific subtype of one.
 # DEPS: Enhanced dependency graph in the form of a list of head-deprel pairs.
 # MISC: Any other annotation.
+
+
+def parsefiles(filenames, lang):
+	"""Parse plain text files with Stanza if a corresponding
+	.conllu file does not exist already."""
+	nlp = None
+	for filename in filenames:
+		conllu = '%s.conllu' % os.path.splitext(filename)[0]
+		if (not os.path.exists(conllu)
+				or os.stat(conllu).st_mtime < os.stat(filename).st_mtime):
+			if nlp is None:
+				import stanza
+				from stanza.utils.conll import CoNLL
+				processors = 'tokenize,mwt,pos,lemma,depparse'
+				try:
+					nlp = stanza.Pipeline(lang, processors=processors)
+				except FileNotFoundError:
+					stanza.download(lang)
+					nlp = stanza.Pipeline(lang, processors=processors)
+			with open(filename) as inp:
+				doc = nlp(inp.read())
+			# TODO: preserve paragraph breaks
+			CoNLL.write_doc2conll(doc, conllu)
 
 
 def conllureader(filename, excludepunct=False):
@@ -58,6 +92,8 @@ def conllureader(filename, excludepunct=False):
 					fields[ID] = int(fields[ID])
 				fields[HEAD] = int(fields[HEAD])
 				sent.append(fields)
+	if not result:
+		raise ValueError('no sentences; not a valid .conllu file?')
 	return result
 
 
@@ -77,11 +113,11 @@ def mean(iterable):
 	return sum(seq) / len(seq)
 
 
-def analyze(filename):
+def analyze(filename, excludepunct=True):
 	"""Return a dict {featname: vector, ...} describing UD file.
 	Each feature vector has a value for each sentence."""
+	sentences = conllureader(filename, excludepunct=excludepunct)
 	result = {}
-	sentences = conllureader(filename, excludepunct=True)
 	result['LEN'] = [len(sent) for sent in sentences]
 	# Ignore certain relations, following Chen and Gerdes (2017, p. 57)
 	# http://www.aclweb.org/anthology/W17-6508
@@ -118,7 +154,7 @@ def analyze(filename):
 	return result
 
 
-def compare(filenames):
+def compare(filenames, parse=None, excludepunct=True):
 	"""Collect statistics for multiple files.
 	Returns a dataframe with one row per filename, with the mean score
 	for each metric in the colmuns."""
@@ -126,13 +162,33 @@ def compare(filenames):
 	# standard deviation and other aspects of the distribution.
 	# This gives a macro average over the per-sentence scores.
 	# TODO: should offer micro average as well.
+	if parse:
+		parsefiles(filenames, parse)
 	return pandas.DataFrame({
 			os.path.basename(filename):
-				pandas.DataFrame(analyze(filename)).mean()
+				pandas.DataFrame(analyze(
+					os.path.splitext(filename)[0] + '.conllu',
+					excludepunct=excludepunct)).mean()
 			for filename in filenames}).T
 
 
+def main():
+	"""CLI."""
+	try:
+		opts, args = getopt.gnu_getopt(sys.argv[1:], '', ['export=', 'parse='])
+		opts = dict(opts)
+	except getopt.GetoptError:
+		print(__doc__)
+		return
+	if not args:
+		print(__doc__)
+		return
+	result = compare(args, opts.get('--parse'))
+	if '--export' in opts:
+		result.to_csv(opts.get('--export'), sep='\t')
+	else:
+		print(result.round(3))
+
+
 if __name__ == '__main__':
-	print(compare(sys.argv[1:]).round(3))
-	# to get a .tsv file:
-	# print(compare(sys.argv[1:]).to_csv(sep='\t'))
+	main()
