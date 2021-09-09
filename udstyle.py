@@ -20,8 +20,10 @@ nl_lassysmall-ud-train.conllu  11.027  2.172  0.775  0.564  0.391  0.072
 import os
 import sys
 import getopt
+import subprocess
 from math import log, sqrt
-import pandas
+from contextlib import contextmanager
+import pandas as pd
 # TODO: extract POS and syntactic n-grams frequencies
 # TODO: POS surprisal, requires training e.g. n-gram model on corpus
 
@@ -45,12 +47,68 @@ ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC = range(10)
 # MISC: Any other annotation.
 
 
+def which(program, exception=True):
+	"""Return first match for program in search path.
+
+	:param exception: By default, ValueError is raised when program not found.
+		Pass False to return None in this case.
+	"""
+	for path in os.environ.get('PATH', os.defpath).split(":"):
+		if path and os.path.exists(os.path.join(path, program)):
+			return os.path.join(path, program)
+	if exception:
+		raise ValueError('%r not found in path; please install it.' % program)
+
+
+@contextmanager
+def genericdecompressor(cmd, filename, encoding='utf8'):
+	"""Run command line decompressor on file and return file object.
+
+	:param cmd: executable in path with gzip-like command line interface;
+		e.g., ``gzip, zstd, lz4, bzip2, lzop``
+	:param filename: the file to decompress.
+	:param encoding: if None, mode is binary; otherwise, text.
+	:raises ValueError: if command returns an error.
+	:returns: a file-like object that must be used in a with-statement;
+		supports .read() and iteration, but not seeking."""
+	with subprocess.Popen(
+			[which(cmd), '--decompress', '--stdout', '--quiet', filename],
+			stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+			encoding=encoding) as proc:
+		# FIXME: should use select to avoid deadlocks due to OS pipe buffers
+		# filling up and blocking the child process.
+		yield proc.stdout
+		retcode = proc.wait()
+		if retcode:  # FIXME: retcode 2 means warning. allow warnings?
+			raise ValueError('non-zero exit code %s from compressor %s:\n%r'
+					% (retcode, cmd, proc.stderr.read()))
+
+
+def openread(filename, encoding='utf8'):
+	"""Open stdin/file for reading; decompress gz/lz4/zst files on-the-fly.
+
+	:param encoding: if None, mode is binary; otherwise, text."""
+	mode = 'rb' if encoding is None else 'rt'
+	if filename == '-':  # TODO: decompress stdin on-the-fly
+		return open(sys.stdin.fileno(), mode=mode, encoding=encoding)
+	if not isinstance(filename, int):
+		if filename.endswith('.gz'):
+			return genericdecompressor('gzip', filename, encoding)
+		elif filename.endswith('.zst'):
+			return genericdecompressor('zstd', filename, encoding)
+		elif filename.endswith('.lz4'):
+			return genericdecompressor('lz4', filename, encoding)
+	return open(filename, mode=mode, encoding=encoding)
+
+
 def parsefiles(filenames, lang):
 	"""Parse plain text files with Stanza if a corresponding
 	.conllu file does not exist already."""
 	nlp = None
+	newfilenames = []
 	for filename in filenames:
 		conllu = '%s.conllu' % os.path.splitext(filename)[0]
+		newfilenames.append(conllu)
 		if (not os.path.exists(conllu)
 				or os.stat(conllu).st_mtime < os.stat(filename).st_mtime):
 			if nlp is None:
@@ -66,6 +124,7 @@ def parsefiles(filenames, lang):
 				doc = nlp(inp.read())
 			# TODO: preserve paragraph breaks
 			CoNLL.write_doc2conll(doc, conllu)
+	return newfilenames
 
 
 def conllureader(filename, excludepunct=False):
@@ -73,11 +132,12 @@ def conllureader(filename, excludepunct=False):
 	sentences[sentno][tokenno][fieldno]"""
 	result = []
 	sent = []
-	with open(filename, encoding='utf8') as inp:
+	with openread(filename) as inp:
 		for line in inp:
 			if line == '\n':
-				result.append(renumber(sent))
-				sent = []
+				if sent:
+					result.append(renumber(sent))
+					sent = []
 			elif line.startswith('#'):  # ignore all comments
 				pass
 			else:
@@ -163,12 +223,11 @@ def compare(filenames, parse=None, excludepunct=True):
 	# This gives a macro average over the per-sentence scores.
 	# TODO: should offer micro average as well.
 	if parse:
-		parsefiles(filenames, parse)
-	return pandas.DataFrame({
+		filenames = parsefiles(filenames, parse)
+	return pd.DataFrame({
 			os.path.basename(filename):
-				pandas.DataFrame(analyze(
-					os.path.splitext(filename)[0] + '.conllu',
-					excludepunct=excludepunct)).mean()
+				pd.DataFrame(analyze(
+					filename, excludepunct=excludepunct)).mean()
 			for filename in filenames}).T
 
 
