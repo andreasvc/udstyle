@@ -211,6 +211,18 @@ def analyze(filename, excludepunct=True):
 	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
 	result['MOD'] = [mean(line[DEPREL] == 'nmod' for line in sent)
 			for sent in sentences]
+	# number of clauses per sentence; https://doi.org/10.1007/s11145-007-9107-5
+	result['CLS'] = [1 + sum(line[UPOS] == 'VERB' for line in sent)
+			for sent in sentences]
+	# avg clause len (clauses/words) https://aclanthology.org/2020.lrec-1.883
+	result['CLL'] = [
+			len(sent) / max(1, sum(line[UPOS] == 'VERB' for line in sent))
+			for sent in sentences]
+	# lexical dennsity: ratio of content words over total number of words
+	# https://aclanthology.org/2020.lrec-1.883
+	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
+	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
+			for sent in sentences]
 	return result
 
 
