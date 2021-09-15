@@ -10,6 +10,10 @@ Reported metrics:
   - ADJ:  proportion of adjacent dependencies.
   - LEFT: dependency direction: proportion of left dependents.
   - MOD:  nominal modifiers (Biber & Gray, 2010).
+  - CLS:  number of clauses per sentence.
+  - CLL:  average clause length (clauses/words)
+  - LXD:  lexical density: ratio of content words over total number of words
+
 Example:
 $ python3 udstyle.py UD_Dutch-LassySmall/*.conllu
                                   LEN    MDD    NDD    ADJ   LEFT    MOD
@@ -51,8 +55,7 @@ def which(program, exception=True):
 	"""Return first match for program in search path.
 
 	:param exception: By default, ValueError is raised when program not found.
-		Pass False to return None in this case.
-	"""
+		Pass False to return None in this case."""
 	for path in os.environ.get('PATH', os.defpath).split(":"):
 		if path and os.path.exists(os.path.join(path, program)):
 			return os.path.join(path, program)
@@ -102,7 +105,7 @@ def openread(filename, encoding='utf8'):
 
 
 def parsefiles(filenames, lang):
-	"""Parse plain text files with Stanza if a corresponding
+	"""Parse UTF-8 encoded plain text files with Stanza if a corresponding
 	.conllu file does not exist already."""
 	nlp = None
 	newfilenames = []
@@ -120,7 +123,7 @@ def parsefiles(filenames, lang):
 				except FileNotFoundError:
 					stanza.download(lang)
 					nlp = stanza.Pipeline(lang, processors=processors)
-			with open(filename) as inp:
+			with open(filename, encoding='utf8') as inp:
 				doc = nlp(inp.read())
 			# TODO: preserve paragraph breaks
 			CoNLL.write_doc2conll(doc, conllu)
@@ -183,8 +186,7 @@ def analyze(filename, excludepunct=True):
 	# http://www.aclweb.org/anthology/W17-6508
 	exclude = ('fixed', 'flat', 'conj', 'punct')
 	# Gibson (1998) http://dx.doi.org/10.1016/S0010-0277(98)00034-1
-	# Liu (2008)
-	# http://cogsci.snu.ac.kr/jcs/index.php/issues/?mod=document&category1=Volume+9&uid=76
+	# Liu (2008) https://hdl.handle.net/10371/70907
 	# mean dependency distance
 	result['MDD'] = [
 			mean(abs(line[ID] - line[HEAD]) for line in sent
@@ -218,7 +220,7 @@ def analyze(filename, excludepunct=True):
 	result['CLL'] = [
 			len(sent) / max(1, sum(line[UPOS] == 'VERB' for line in sent))
 			for sent in sentences]
-	# lexical dennsity: ratio of content words over total number of words
+	# lexical density: ratio of content words over total number of words
 	# https://aclanthology.org/2020.lrec-1.883
 	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
 	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
