@@ -16,10 +16,10 @@ Reported metrics:
 
 Example:
 $ python3 udstyle.py UD_Dutch-LassySmall/*.conllu
-                                  LEN    MDD    NDD    ADJ   LEFT    MOD
-nl_lassysmall-ud-dev.conllu    14.182  2.461  0.926  0.500  0.459  0.052
-nl_lassysmall-ud-test.conllu   11.434  2.192  0.807  0.547  0.412  0.074
-nl_lassysmall-ud-train.conllu  11.027  2.172  0.775  0.564  0.391  0.072
+                 LEN    MDD    NDD    ADJ   LEFT    MOD    CLS    CLL    LXD
+dev.conllu    14.182  2.461  0.926  0.500  0.459  0.052  2.223  9.190  0.603
+test.conllu   11.434  2.192  0.807  0.547  0.412  0.074  1.771  9.013  0.657
+train.conllu  11.027  2.172  0.775  0.564  0.391  0.072  1.863  8.107  0.645
 """
 import os
 import sys
@@ -139,7 +139,10 @@ def conllureader(filename, excludepunct=False):
 		for line in inp:
 			if line == '\n':
 				if sent:
-					result.append(renumber(sent))
+					try:
+						result.append(renumber(sent))
+					except KeyError:
+						pass
 					sent = []
 			elif line.startswith('#'):  # ignore all comments
 				pass
@@ -153,7 +156,10 @@ def conllureader(filename, excludepunct=False):
 					fields[ID] = int(fields[ID][:fields[ID].index('-')])
 				else:  # normal tokens
 					fields[ID] = int(fields[ID])
-				fields[HEAD] = int(fields[HEAD])
+				try:
+					fields[HEAD] = int(fields[HEAD])
+				except ValueError:
+					continue
 				sent.append(fields)
 	if not result:
 		raise ValueError('no sentences; not a valid .conllu file?')
@@ -248,7 +254,7 @@ def compare(filenames, parse=None, excludepunct=True):
 def main():
 	"""CLI."""
 	try:
-		opts, args = getopt.gnu_getopt(sys.argv[1:], '', ['export=', 'parse='])
+		opts, args = getopt.gnu_getopt(sys.argv[1:], '', ['output=', 'parse='])
 		opts = dict(opts)
 	except getopt.GetoptError:
 		print(__doc__)
@@ -257,8 +263,8 @@ def main():
 		print(__doc__)
 		return
 	result = compare(args, opts.get('--parse'))
-	if '--export' in opts:
-		result.to_csv(opts.get('--export'), sep='\t')
+	if '--output' in opts:
+		result.to_csv(opts.get('--output'), sep='\t')
 	else:
 		print(result.round(3))
 
