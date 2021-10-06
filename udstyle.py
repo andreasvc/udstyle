@@ -13,6 +13,7 @@ Reported metrics:
   - CLS:  number of clauses per sentence.
   - CLL:  average clause length (clauses/words)
   - LXD:  lexical density: ratio of content words over total number of words
+  - POS/DEP tag frequencies (only with --output)
 
 Example:
 $ python3 udstyle.py UD_Dutch-LassySmall/*.conllu
@@ -27,6 +28,7 @@ import getopt
 import subprocess
 from math import log, sqrt
 from contextlib import contextmanager
+from collections import Counter
 import pandas as pd
 # TODO: extract POS and syntactic n-grams frequencies
 # TODO: POS surprisal, requires training e.g. n-gram model on corpus
@@ -231,23 +233,116 @@ def analyze(filename, excludepunct=True):
 	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
 	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
 			for sent in sentences]
+	# This gives a macro average over the per-sentence scores.
+	# Might want to look at standard deviation and other aspects of the
+	# distribution. TODO: offer micro average as well.
+	for a, b in result.items():
+		result[a] = sum(b) / len(b)
+	result.update(counttags(sentences))
 	return result
+
+
+def counttags(sentences):
+	"""Count POS and dependency tags; returns relative frequencies."""
+	numtokens = sum(len(sent) for sent in sentences)
+	postags = Counter(line[UPOS] for sent in sentences for line in sent)
+	deptags = Counter(line[DEPREL] for sent in sentences for line in sent)
+	tags = {a: postags[a] / numtokens for a in [
+			'ADJ',  # adjective
+			'ADP',  # adposition
+			'ADV',  # adverb
+			'AUX',  # auxiliary
+			'CCONJ',  # coordinating conjunction
+			'DET',  # determiner
+			'INTJ',  # interjection
+			'NOUN',  # noun
+			'NUM',  # numeral
+			'PART',  # particle
+			'PRON',  # pronoun
+			'PROPN',  # proper noun
+			'PUNCT',  # punctuation
+			'SCONJ',  # subordinating conjunction
+			'SYM',  # symbol
+			'VERB',  # verb
+			'X',  # other
+			]}
+	tags.update({a: deptags[a] / numtokens for a in [
+			'acl',  # clausal modifier of noun (adnominal clause)
+			'acl:relcl',  # relative clause modifier
+			'advcl',  # adverbial clause modifier
+			'advmod',  # adverbial modifier
+			'advmod:emph',  # emphasizing word, intensifier
+			'advmod:lmod',  # locative adverbial modifier
+			'amod',  # adjectival modifier
+			'appos',  # appositional modifier
+			'aux',  # auxiliary
+			'aux:pass',  # passive auxiliary
+			'case',  # case marking
+			'cc',  # coordinating conjunction
+			'cc:preconj',  # preconjunct
+			'ccomp',  # clausal complement
+			'clf',  # classifier
+			'compound',  # compound
+			'compound:lvc',  # light verb construction
+			'compound:prt',  # phrasal verb particle
+			'compound:redup',  # reduplicated compounds
+			'compound:svc',  # serial verb compounds
+			'conj',  # conjunct
+			'cop',  # copula
+			'csubj',  # clausal subject
+			'csubj:pass',  # clausal passive subject
+			'dep',  # unspecified dependency
+			'det',  # determiner
+			'det:numgov',  # pronominal quantifier governing the case of the noun
+			'det:nummod',  # pronominal quantifier agreeing in case with the noun
+			'det:poss',  # possessive determiner
+			'discourse',  # discourse element
+			'dislocated',  # dislocated elements
+			'expl',  # expletive
+			'expl:impers',  # impersonal expletive
+			'expl:pass',  # reflexive pronoun used in reflexive passive
+			'expl:pv',  # reflexive clitic with an inherently reflexive verb
+			'fixed',  # fixed multiword expression
+			'flat',  # flat multiword expression
+			'flat:foreign',  # foreign words
+			'flat:name',  # names
+			'goeswith',  # goes with
+			'iobj',  # indirect object
+			'list',  # list
+			'mark',  # marker
+			'nmod',  # nominal modifier
+			'nmod:poss',  # possessive nominal modifier
+			'nmod:tmod',  # temporal modifier
+			'nsubj',  # nominal subject
+			'nsubj:pass',  # passive nominal subject
+			'nummod',  # numeric modifier
+			'nummod:gov',  # numeric modifier governing the case of the noun
+			'obj',  # object
+			'obl',  # oblique nominal
+			'obl:agent',  # agent modifier
+			'obl:arg',  # oblique argument
+			'obl:lmod',  # locative modifier
+			'obl:tmod',  # temporal modifier
+			'orphan',  # orphan
+			'parataxis',  # parataxis
+			'punct',  # punctuation
+			'reparandum',  # overridden disfluency
+			'root',  # root
+			'vocative',  # vocative
+			'xcomp',  # open clausal complement
+			]})
+	return tags
 
 
 def compare(filenames, parse=None, excludepunct=True):
 	"""Collect statistics for multiple files.
 	Returns a dataframe with one row per filename, with the mean score
 	for each metric in the colmuns."""
-	# This only reports the mean for each feature, you might want to look at
-	# standard deviation and other aspects of the distribution.
-	# This gives a macro average over the per-sentence scores.
-	# TODO: should offer micro average as well.
 	if parse:
 		filenames = parsefiles(filenames, parse)
 	return pd.DataFrame({
 			os.path.basename(filename):
-				pd.DataFrame(analyze(
-					filename, excludepunct=excludepunct)).mean()
+				analyze(filename, excludepunct=excludepunct)
 			for filename in filenames}).T
 
 
@@ -266,7 +361,7 @@ def main():
 	if '--output' in opts:
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
-		print(result.round(3))
+		print(result.iloc[:, :-79].round(3))  # skip tags
 
 
 if __name__ == '__main__':
