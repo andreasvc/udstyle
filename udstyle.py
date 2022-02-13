@@ -3,6 +3,7 @@
 Usage: python3 udstyle.py [OPTIONS] FILE...
   --parse=LANG          parse texts with Stanza; provide 2 letter language code
   --output=FILENAME     write result to a tab-separated file.
+  --persentence         report per sentence results, not mean per document
 Reported metrics:
   - LEN:  mean sentence length in words (excluding punctuation).
   - MDD:  mean dependency distance (Gibson, 1998).
@@ -119,12 +120,11 @@ def parsefiles(filenames, lang):
 			if nlp is None:
 				import stanza
 				from stanza.utils.conll import CoNLL
-				processors = 'tokenize,mwt,pos,lemma,depparse'
 				try:
-					nlp = stanza.Pipeline(lang, processors=processors)
+					nlp = stanza.Pipeline(lang)
 				except FileNotFoundError:
 					stanza.download(lang)
-					nlp = stanza.Pipeline(lang, processors=processors)
+					nlp = stanza.Pipeline(lang)
 			with open(filename, encoding='utf8') as inp:
 				doc = nlp(inp.read())
 			# TODO: preserve paragraph breaks
@@ -184,10 +184,26 @@ def mean(iterable):
 	return sum(seq) / len(seq)
 
 
-def analyze(filename, excludepunct=True):
+def analyze(filename, excludepunct=True, persentence=False):
 	"""Return a dict {featname: vector, ...} describing UD file.
 	Each feature vector has a value for each sentence."""
 	sentences = conllureader(filename, excludepunct=excludepunct)
+	result = complexitymetrics(sentences)
+	if persentence:
+		result['sent'] = [' '.join(line[FORM] for line in sent)
+				for sent in sentences]
+		return result
+	# Get macro average over the per-sentence scores.
+	# Might want to look at standard deviation and other aspects of the
+	# distribution. TODO: offer micro average as well.
+	for a, b in result.items():
+		result[a] = sum(b) / len(b)
+	result.update(counttags(sentences))
+	return result
+
+
+def complexiymetrics(sentences):
+	"""Return dict of complexity metrics with results for each sentence."""
 	result = {}
 	result['LEN'] = [len(sent) for sent in sentences]
 	# Ignore certain relations, following Chen and Gerdes (2017, p. 57)
@@ -233,12 +249,6 @@ def analyze(filename, excludepunct=True):
 	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
 	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
 			for sent in sentences]
-	# This gives a macro average over the per-sentence scores.
-	# Might want to look at standard deviation and other aspects of the
-	# distribution. TODO: offer micro average as well.
-	for a, b in result.items():
-		result[a] = sum(b) / len(b)
-	result.update(counttags(sentences))
 	return result
 
 
@@ -334,12 +344,19 @@ def counttags(sentences):
 	return tags
 
 
-def compare(filenames, parse=None, excludepunct=True):
+def compare(filenames, parse=None, excludepunct=True, persentence=False):
 	"""Collect statistics for multiple files.
 	Returns a dataframe with one row per filename, with the mean score
 	for each metric in the colmuns."""
 	if parse:
 		filenames = parsefiles(filenames, parse)
+	if persentence:
+		return pd.concat([
+				pd.DataFrame(
+					analyze(filename, excludepunct=excludepunct,
+						persentence=persentence))
+				for filename in filenames],
+				ignore_index=True)
 	return pd.DataFrame({
 			os.path.basename(filename):
 				analyze(filename, excludepunct=excludepunct)
@@ -349,7 +366,8 @@ def compare(filenames, parse=None, excludepunct=True):
 def main():
 	"""CLI."""
 	try:
-		opts, args = getopt.gnu_getopt(sys.argv[1:], '', ['output=', 'parse='])
+		opts, args = getopt.gnu_getopt(
+				sys.argv[1:], '', ['output=', 'parse=', 'persentence'])
 		opts = dict(opts)
 	except getopt.GetoptError:
 		print(__doc__)
@@ -357,8 +375,14 @@ def main():
 	if not args:
 		print(__doc__)
 		return
-	result = compare(args, opts.get('--parse'))
-	if '--output' in opts:
+	result = compare(
+			args, opts.get('--parse'), persentence='--persentence' in opts)
+	if '--persentence' in opts:
+		if '--output' in opts:
+			result.to_csv(opts.get('--output'), sep='\t')
+		else:
+			print(result)
+	elif '--output' in opts:
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
 		print(result.iloc[:, :-79].round(3))  # skip tags
