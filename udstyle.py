@@ -202,7 +202,7 @@ def analyze(filename, excludepunct=True, persentence=False):
 	return result
 
 
-def complexiymetrics(sentences):
+def complexitymetrics(sentences):
 	"""Return dict of complexity metrics with results for each sentence."""
 	result = {}
 	result['LEN'] = [len(sent) for sent in sentences]
