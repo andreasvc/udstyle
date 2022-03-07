@@ -1,0 +1,19 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: udstyle
+message: >-
+  Please cite this software using the metadata from
+  'preferred-citation'.
+type: software
+authors:
+  - orcid: 'https://orcid.org/0000-0002-4545-1548'
+    given-names: Andreas
+    name-particle: van
+    family-names: Cranenburgh
+    email: a.w.van.cranenburgh@rug.nl
+    affiliation: University of Groningen
+identifiers:
+  - type: url
+    value: 'https://github.com/andreasvc/udstyle'
