@@ -385,7 +385,8 @@ def main():
 	elif '--output' in opts:
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
-		print(result.iloc[:, :-79].round(3))  # skip tags
+		selection = 'LEN MDD NDD ADJD LEFT MOD CLS CLL LXD'.split()
+		print(result.loc[:, selection].round(3))  # skip tags
 
 
 if __name__ == '__main__':
