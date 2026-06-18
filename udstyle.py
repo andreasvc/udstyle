@@ -192,6 +192,7 @@ def analyze(filename, excludepunct=True, persentence=False):
 	if persentence:
 		result['sent'] = [' '.join(line[FORM] for line in sent)
 				for sent in sentences]
+		result['filename'] = filename
 		return result
 	# Get macro average over the per-sentence scores.
 	# Might want to look at standard deviation and other aspects of the
