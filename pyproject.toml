@@ -9,6 +9,7 @@ description = "Compute complexity metrics from Universal Dependencies"
 requires-python = ">=3.9"
 dependencies = [
     "pandas",
+    "wordfreq>=3.0",
 ]
 
 [project.optional-dependencies]
