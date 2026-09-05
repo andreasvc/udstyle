@@ -119,6 +119,88 @@ def test_dependency_depth():
 	assert udstyle.sentencemetrics([chain, star])['DEPTH'] == [3, 1]
 
 
+def test_phase_one_document_and_dependency_metrics():
+	chain = sentence(4)
+	star = sentence(3)
+	for token in star[1:]:
+		token[udstyle.HEAD] = 1
+	metrics = udstyle.summarizedmetrics([chain, star], 'en', 3.0, 4.0)
+	assert metrics['NSENT'] == 2
+	assert metrics['NTOK'] == 7
+	assert metrics['WORDLEN'] == pytest.approx(2)
+	assert metrics['AVGMDD'] == pytest.approx((1 + 2) / 2)
+	assert metrics['MAXMDD'] == 2
+
+
+def test_word_length_always_excludes_punctuation():
+	tokens = sentence(2)
+	tokens[0][udstyle.FORM] = 'word'
+	tokens[1][udstyle.FORM] = '...'
+	tokens[1][udstyle.UPOS] = 'PUNCT'
+	metrics = udstyle.documentmetrics([tokens], 'en', 3.0, 4.0)
+	assert metrics['NTOK'] == 2
+	assert metrics['WORDLEN'] == 4
+
+
+def test_roots_verb_edges_and_argument_order():
+	verbal = [
+		[1, 'They', 'they', 'PRON', '_', '_', 2, 'nsubj', '_', '_'],
+		[2, 'saw', 'see', 'VERB', '_', '_', 0, 'root', '_', '_'],
+		[3, 'it', 'it', 'PRON', '_', '_', 2, 'obj', '_', '_'],
+		[4, 'today', 'today', 'ADV', '_', '_', 2, 'advmod', '_', '_'],
+	]
+	copular = [
+		[1, 'Ready', 'ready', 'ADJ', '_', '_', 0, 'root', '_', '_'],
+		[2, 'is', 'be', 'AUX', '_', '_', 1, 'cop', '_', '_'],
+		[3, 'she', 'she', 'PRON', '_', '_', 1, 'nsubj', '_', '_'],
+	]
+	metrics = udstyle.summarizedmetrics(
+			[verbal, copular], 'en', 3.0, 4.0)
+	assert metrics['PRED'] == 1
+	assert metrics['VBROOT'] == pytest.approx(0.5)
+	assert metrics['PREDROOT'] == 1
+	assert metrics['VBEDGES'] == 3
+	assert metrics['VBEDGE3'] == 1
+	assert sum(value for name, value in metrics.items()
+			if name.startswith('VBEDGE') and name != 'VBEDGES') == 1
+	assert metrics['SBJPRE'] == pytest.approx(0.5)
+	assert metrics['SBJPOST'] == pytest.approx(0.5)
+	assert metrics['OBJPRE'] == 0
+	assert metrics['OBJPOST'] == 1
+
+
+def test_document_verb_edges_is_weighted_by_verbal_heads():
+	oneverb = sentence(3, upos='VERB')
+	twoverbs = sentence(2, upos='VERB')
+	metrics = udstyle.summarizedmetrics(
+			[oneverb, twoverbs], 'en', 3.0, 4.0)
+	# Arities are 1, 1, 0 and 1, 0; averaging sentence means would give 7/12.
+	assert metrics['VBEDGES'] == pytest.approx(3 / 5)
+	assert metrics['VBEDGE0'] == pytest.approx(2 / 5)
+	assert metrics['VBEDGE1'] == pytest.approx(3 / 5)
+
+
+def test_example_data():
+	result = udstyle.analyze(
+			'tests/example.conllu', 'en', 3.0, 4.0,
+			excludepunct=False).iloc[0]
+	assert result['NSENT'] == 3
+	assert result['NTOK'] == 25
+	assert result['WORDLEN'] == pytest.approx(5.363636363636363)
+	assert result['PRED'] == pytest.approx(5 / 3)
+	assert result['VBEDGES'] == pytest.approx(3.25)
+	assert result['VBEDGE2'] == pytest.approx(0.25)
+	assert result['VBEDGE3'] == pytest.approx(0.25)
+	assert result['VBEDGE4'] == pytest.approx(0.5)
+	assert result['AVGMDD'] == 3
+	assert result['MAXMDD'] == 4
+	assert result['PREDROOT'] == 1
+	assert result['SBJPRE'] == 1
+	assert result['SBJPOST'] == 0
+	assert result['OBJPRE'] == 0
+	assert result['OBJPOST'] == 1
+
+
 def test_morphological_feature_distributions_and_coverage():
 	tokens = sentence(5, upos='VERB')
 	tokens[0][udstyle.FEATS] = 'Mood=Ind|Tense=Pres|VerbForm=Fin'

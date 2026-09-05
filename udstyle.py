@@ -9,16 +9,28 @@ Usage: python3 udstyle.py [OPTIONS] FILE...
   --output=FILENAME     write result to a tab-separated file.
   --persentence         report per sentence results, not mean per document
 Reported metrics:
+  - NSENT:  number of sentences.
+  - NTOK:   number of tokens (excluding punctuation by default).
   - LEN:    mean sentence length in words (excluding punctuation).
   - LENVAR: coefficient of variation of sentence lengths
-  - DEPTH:  maximum number of dependency edges between any token and the root.
+  - WORDLEN: mean word length in characters.
   - MDD:    mean dependency distance (Gibson, 1998).
   - NDD:    normalized dependency distance (Lei & Jockers, 2018).
   - ADJD:   proportion of adjacent dependencies.
   - LEFT:   dependency direction: proportion of left dependents.
+  - DEPTH:  maximum number of dependency edges between any token and the root.
+  - AVGMDD: mean of the maximum dependency distance in each sentence.
+  - MAXMDD: maximum dependency distance in the document.
   - MOD:    nominal modifiers (Biber & Gray, 2010).
   - CLS:    number of clauses per sentence.
   - CLL:    average clause length (clauses/words)
+  - PRED:   number of verbal or copular predicates per sentence.
+  - VBROOT: proportion of sentence roots that are verbs.
+  - PREDROOT: proportion of roots that are verbs or copular predicates.
+  - VBEDGES: mean number of dependents of lexical verbs.
+  - VBEDGE*: distribution of lexical verbs by number of dependents.
+  - SBJPRE/SBJPOST: position of nominal subjects relative to their heads.
+  - OBJPRE/OBJPOST: position of objects relative to their heads.
   - LXD:    lexical density: ratio of content words over total number of words
   - MTLD:   Measure of Textual Lexical Diversity over content-word lemmas
   - LOWF:   proportion of content-word lemmas below the Zipf threshold
@@ -368,31 +380,46 @@ def dependencydepth(sentence):
 	return maxdepth
 
 
+def verbarities(sentence):
+	"""Return arities of lexical verbs."""
+	verbalheads = [line for line in sentence if line[UPOS] == 'VERB']
+	return [sum(
+			child[HEAD] == head[ID]
+			and child[DEPREL].split(':', 1)[0] not in ('aux', 'punct', 'cop')
+			for child in sentence)
+			for head in verbalheads]
+
+
 def documentmetrics(sentences, lang, lowfreq, highfreq):
 	"""Return metrics defined over a whole document or chunk."""
+	result = {}
 	lengths = [len(sent) for sent in sentences]
 	# The following metrics are adapted from
 	# https://github.com/SemHuis/genai_news/blob/main/analysis/article_metrics.py
-	lenvar = None
+	result['LENVAR'] = None
 	if len(lengths) >= 2:
 		avglen = mean(lengths)
 		variance = sum((length - avglen) ** 2 for length in lengths) / (
 				len(lengths) - 1)
-		lenvar = sqrt(variance) / avglen if avglen else None
+		result['LENVAR'] = sqrt(variance) / avglen if avglen else None
 	lemmas = [line[LEMMA].lower() for sent in sentences for line in sent
 			if line[UPOS] in CONTENTPOS and line[LEMMA] not in ('', '_')]
-	mtld = getmtld(lemmas) if len(lemmas) >= MTLDMINWORDS else None
+	result['MTLD'] = getmtld(lemmas) if len(lemmas) >= MTLDMINWORDS else None
 	frequencies = [zipf_frequency(lemma, lang) for lemma in lemmas]
-	lowf = (mean(frequency < lowfreq for frequency in frequencies)
+	result['LOWF'] = (mean(frequency < lowfreq for frequency in frequencies)
 			if frequencies else None)
-	highf = (mean(frequency >= highfreq for frequency in frequencies)
+	result['HIGHF'] = (mean(frequency >= highfreq for frequency in frequencies)
 			if frequencies else None)
 	known = [frequency for frequency in frequencies if frequency > 0]
-	zipf = mean(known) if known else None
-	wfcov = (mean(frequency > 0 for frequency in frequencies)
+	result['ZIPF'] = mean(known) if known else None
+	result['WFCOV'] = (mean(frequency > 0 for frequency in frequencies)
 			if frequencies else None)
-	return {'LENVAR': lenvar, 'MTLD': mtld, 'LOWF': lowf, 'HIGHF': highf,
-			'ZIPF': zipf, 'WFCOV': wfcov}
+	result['NSENT'] = len(sentences)
+	tokens = [line for sent in sentences for line in sent]
+	wordforms = [line[FORM] for line in tokens if line[UPOS] != 'PUNCT']
+	result['NTOK'] = len(tokens)
+	result['WORDLEN'] = mean(map(len, wordforms)) if wordforms else None
+	return result
 
 
 def sentencemetrics(sentences):
@@ -411,6 +438,17 @@ def sentencemetrics(sentences):
 			mean(abs(line[ID] - line[HEAD]) for line in sent
 				if line[DEPREL] not in exclude)
 			for sent in sentences]
+	# Maximum dependency spans. Unlike MDD, these exclude only punctuation
+	# and the artificial root link.
+	dependencydistances = [
+			[abs(line[ID] - line[HEAD]) for line in sent
+				if line[DEPREL].split(':', 1)[0] not in ('punct', 'root')]
+			for sent in sentences]
+	result['AVGMDD'] = [max(distances, default=0)
+			for distances in dependencydistances]
+	# MAXMDD has the same sentence-level values as AVGMDD, but is aggregated
+	# with max() instead of mean() at document level.
+	result['MAXMDD'] = result['AVGMDD']
 	# Lei & Jockers (2018): https://doi.org/10.1080/09296174.2018.1504615
 	# normalized dependency distance
 	result['NDD'] = [
@@ -444,6 +482,38 @@ def sentencemetrics(sentences):
 	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
 	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
 			for sent in sentences]
+	result['PRED'] = [sum(
+			line[UPOS] == 'VERB' or any(
+					child[HEAD] == line[ID]
+					and child[DEPREL].split(':', 1)[0] == 'cop'
+					for child in sent)
+			for line in sent)
+			for sent in sentences]
+	roots = [[line for line in sent if line[HEAD] == 0] for sent in sentences]
+	result['VBROOT'] = [mean(line[UPOS] == 'VERB' for line in sentroots)
+			for sentroots in roots]
+	result['PREDROOT'] = [mean(
+			line[UPOS] == 'VERB' or any(
+					child[HEAD] == line[ID]
+					and child[DEPREL].split(':', 1)[0] == 'cop'
+					for child in sent)
+			for line in sentroots)
+			for sent, sentroots in zip(sentences, roots)]
+	result['VBEDGES'] = []
+	result['SBJPRE'], result['SBJPOST'] = [], []
+	result['OBJPRE'], result['OBJPOST'] = [], []
+	for sent in sentences:
+		arities = verbarities(sent)
+		result['VBEDGES'].append(mean(arities) if arities else None)
+		for relation, before, after in (
+				('nsubj', 'SBJPRE', 'SBJPOST'),
+				('obj', 'OBJPRE', 'OBJPOST')):
+			dependents = [line for line in sent
+					if line[DEPREL].split(':', 1)[0] == relation]
+			result[before].append(mean(line[ID] < line[HEAD]
+					for line in dependents) if dependents else None)
+			result[after].append(mean(line[ID] > line[HEAD]
+					for line in dependents) if dependents else None)
 	return result
 
 
@@ -484,10 +554,21 @@ def counttags(sentences):
 
 def summarizedmetrics(sentences, lang, lowfreq, highfreq):
 	"""Return one scalar score per metric for a document or chunk."""
-	result = {name: mean(values) for name, values
-			in sentencemetrics(sentences).items()}
+	metrics = sentencemetrics(sentences)
+	result = {}
+	for name, values in metrics.items():
+		values = [value for value in values if value is not None]
+		result[name] = ((max(values) if name == 'MAXMDD' else mean(values))
+				if values else None)
 	result.update(documentmetrics(sentences, lang, lowfreq, highfreq))
 	result.update(counttags(sentences))
+	arities = [arity for sentence in sentences for arity in verbarities(sentence)]
+	if arities:
+		# Use the same verb-weighted population for the mean and distribution.
+		result['VBEDGES'] = mean(arities)
+		aritycounts = Counter(arities)
+		result.update({f'VBEDGE{arity}': count / len(arities)
+				for arity, count in sorted(aritycounts.items())})
 	return result
 
 
@@ -582,9 +663,11 @@ def main():
 	elif '--output' in opts:
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
-		selection = ['LEN', 'LENVAR', 'MDD', 'NDD', 'DEPTH', 'ADJD', 'LEFT',
-				'MOD', 'CLS', 'CLL' , 'LXD', 'MTLD', 'LOWF', 'HIGHF', 'ZIPF',
-				'WFCOV']
+		selection = ['NSENT', 'NTOK', 'WORDLEN', 'LEN', 'LENVAR', 'MDD',
+				'AVGMDD', 'MAXMDD', 'NDD', 'DEPTH', 'ADJD', 'LEFT', 'MOD',
+				'CLS', 'CLL', 'PRED', 'VBROOT', 'PREDROOT', 'VBEDGES', 'SBJPRE',
+				'SBJPOST', 'OBJPRE', 'OBJPOST', 'LXD', 'MTLD', 'LOWF',
+				'HIGHF', 'ZIPF', 'WFCOV']
 		print(result.loc[:, selection].round(3))  # skip tags
 
 

@@ -15,16 +15,28 @@ Usage: python3 udstyle.py [OPTIONS] FILE...
   --output=FILENAME     write result to a tab-separated file.
   --persentence         report per sentence results, not mean per document
 Reported metrics:
+  - NSENT:  number of sentences.
+  - NTOK:   number of tokens (excluding punctuation).
   - LEN:    mean sentence length in words (excluding punctuation).
   - LENVAR: coefficient of variation of sentence lengths
-  - DEPTH:  maximum number of dependency edges between any token and the root.
+  - WORDLEN: mean word length in characters.
   - MDD:    mean dependency distance (Gibson, 1998).
   - NDD:    normalized dependency distance (Lei & Jockers, 2018).
   - ADJD:   proportion of adjacent dependencies.
   - LEFT:   dependency direction: proportion of left dependents.
+  - DEPTH:  maximum number of dependency edges between any token and the root.
+  - AVGMDD: mean of the maximum dependency distance in each sentence.
+  - MAXMDD: maximum dependency distance in the document.
   - MOD:    nominal modifiers (Biber & Gray, 2010).
   - CLS:    number of clauses per sentence.
   - CLL:    average clause length (clauses/words)
+  - PRED:   number of verbal or copular predicates per sentence.
+  - VBROOT: proportion of sentence roots that are verbs.
+  - PREDROOT: proportion of roots that are verbs or copular predicates.
+  - VBEDGES: mean number of dependents of lexical verbs.
+  - VBEDGE*: distribution of lexical verbs by number of dependents.
+  - SBJPRE/SBJPOST: position of nominal subjects relative to their heads.
+  - OBJPRE/OBJPOST: position of objects relative to their heads.
   - LXD:    lexical density: ratio of content words over total number of words
   - MTLD:   Measure of Textual Lexical Diversity over content-word lemmas
   - LOWF:   proportion of content-word lemmas below the Zipf threshold
@@ -61,6 +73,10 @@ proportion of `VERB` and `AUX` tokens carrying the corresponding feature;
 tokens with the feature on another part of speech are also included as
 possible hosts. This separates the observed distribution from annotation
 coverage, which can differ substantially between UD languages and treebanks.
+Dynamic `VBEDGE0`, `VBEDGE1`, ... columns give the proportion of lexical verbs
+with the corresponding number of dependents. As with `VBEDGES`, only `VERB`
+heads are included, including those with zero dependents; `aux`, `punct`, and
+`cop` dependents are excluded.
 
 With `--chunksize=N`, each input file is divided into consecutive chunks of
 approximately N words, with boundaries rounded to the nearest sentence
@@ -97,6 +113,10 @@ pip install stanza
 
 ## References
 
-Simple readability metrics: https://github.com/andreasvc/readability/
-
 If you use this code for research, please cite this repository.
+
+Several metrics were inspired by Profiling-UD: https://aclanthology.org/2020.lrec-1.883/
+
+Some metrics were inspired by https://github.com/SemHuis/genai_news/blob/main/analysis/article_metrics.py
+
+Simple readability metrics: https://github.com/andreasvc/readability/
