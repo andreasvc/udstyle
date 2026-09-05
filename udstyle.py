@@ -10,7 +10,7 @@ Usage: python3 udstyle.py [OPTIONS] FILE...
   --persentence         report per sentence results, not mean per document
 Reported metrics:
   - NSENT:  number of sentences.
-  - NTOK:   number of tokens (excluding punctuation by default).
+  - NWORDS: number of syntactic words (excluding punctuation).
   - LEN:    mean sentence length in words (excluding punctuation).
   - LENVAR: coefficient of variation of sentence lengths
   - WORDLEN: mean word length in characters.
@@ -23,7 +23,7 @@ Reported metrics:
   - MAXMDD: maximum dependency distance in the document.
   - MOD:    nominal modifiers (Biber & Gray, 2010).
   - CLS:    number of clauses per sentence.
-  - CLL:    average clause length (clauses/words)
+  - CLL:    average clause length (words/predicate)
   - PRED:   number of verbal or copular predicates per sentence.
   - VBROOT: proportion of sentence roots that are verbs.
   - PREDROOT: proportion of roots that are verbs or copular predicates.
@@ -97,7 +97,6 @@ POSTAGS = [
 		'PART',  # particle
 		'PRON',  # pronoun
 		'PROPN',  # proper noun
-		'PUNCT',  # punctuation
 		'SCONJ',  # subordinating conjunction
 		'SYM',  # symbol
 		'VERB',  # verb
@@ -111,67 +110,40 @@ VERBFEATS = [
 		'Aspect',  # specifies duration of the action in time, whether the action has been completed etc.
 		'Voice',  # For Indo-European speakers, voice means mainly the active-passive distinction. In other languages, other shades of verb meaning are categorized as voice.
 		]
-# All UD 2.0 dependency tags
+# UD 2.0 base dependency tags, excluding punctuation
 DEPTAGS = [
 		'acl',  # clausal modifier of noun (adnominal clause)
-		'acl:relcl',  # relative clause modifier
 		'advcl',  # adverbial clause modifier
 		'advmod',  # adverbial modifier
-		'advmod:emph',  # emphasizing word, intensifier
-		'advmod:lmod',  # locative adverbial modifier
 		'amod',  # adjectival modifier
 		'appos',  # appositional modifier
 		'aux',  # auxiliary
-		'aux:pass',  # passive auxiliary
 		'case',  # case marking
 		'cc',  # coordinating conjunction
-		'cc:preconj',  # preconjunct
 		'ccomp',  # clausal complement
 		'clf',  # classifier
 		'compound',  # compound
-		'compound:lvc',  # light verb construction
-		'compound:prt',  # phrasal verb particle
-		'compound:redup',  # reduplicated compounds
-		'compound:svc',  # serial verb compounds
 		'conj',  # conjunct
 		'cop',  # copula
 		'csubj',  # clausal subject
-		'csubj:pass',  # clausal passive subject
 		'dep',  # unspecified dependency
 		'det',  # determiner
-		'det:numgov',  # pronominal quantifier governing the case of the noun
-		'det:nummod',  # pronominal quantifier agreeing in case with the noun
-		'det:poss',  # possessive determiner
 		'discourse',  # discourse element
 		'dislocated',  # dislocated elements
 		'expl',  # expletive
-		'expl:impers',  # impersonal expletive
-		'expl:pass',  # reflexive pronoun used in reflexive passive
-		'expl:pv',  # reflexive clitic with an inherently reflexive verb
 		'fixed',  # fixed multiword expression
 		'flat',  # flat multiword expression
-		'flat:foreign',  # foreign words
-		'flat:name',  # names
 		'goeswith',  # goes with
 		'iobj',  # indirect object
 		'list',  # list
 		'mark',  # marker
 		'nmod',  # nominal modifier
-		'nmod:poss',  # possessive nominal modifier
-		'nmod:tmod',  # temporal modifier
 		'nsubj',  # nominal subject
-		'nsubj:pass',  # passive nominal subject
 		'nummod',  # numeric modifier
-		'nummod:gov',  # numeric modifier governing the case of the noun
 		'obj',  # object
 		'obl',  # oblique nominal
-		'obl:agent',  # agent modifier
-		'obl:arg',  # oblique argument
-		'obl:lmod',  # locative modifier
-		'obl:tmod',  # temporal modifier
 		'orphan',  # orphan
 		'parataxis',  # parataxis
-		'punct',  # punctuation
 		'reparandum',  # overridden disfluency
 		'root',  # root
 		'vocative',  # vocative
@@ -380,12 +352,35 @@ def dependencydepth(sentence):
 	return maxdepth
 
 
+DISTANCEEXCLUDE = {'fixed', 'flat', 'conj', 'punct', 'root'}
+
+
+def baserelation(token):
+	"""Return the universal base relation of a UD token."""
+	return token[DEPREL].split(':', 1)[0]
+
+
+def dependencylinks(sentence):
+	"""Return links included by all dependency-distance metrics."""
+	return [token for token in sentence
+			if baserelation(token) not in DISTANCEEXCLUDE]
+
+
+def predicatecount(sentence):
+	"""Count lexical-verbal and copular predicate heads."""
+	return sum(
+			token[UPOS] == 'VERB' or any(
+					child[HEAD] == token[ID] and baserelation(child) == 'cop'
+					for child in sentence)
+			for token in sentence)
+
+
 def verbarities(sentence):
 	"""Return arities of lexical verbs."""
 	verbalheads = [line for line in sentence if line[UPOS] == 'VERB']
 	return [sum(
 			child[HEAD] == head[ID]
-			and child[DEPREL].split(':', 1)[0] not in ('aux', 'punct', 'cop')
+			and baserelation(child) not in ('aux', 'punct', 'cop')
 			for child in sentence)
 			for head in verbalheads]
 
@@ -417,7 +412,7 @@ def documentmetrics(sentences, lang, lowfreq, highfreq):
 	result['NSENT'] = len(sentences)
 	tokens = [line for sent in sentences for line in sent]
 	wordforms = [line[FORM] for line in tokens if line[UPOS] != 'PUNCT']
-	result['NTOK'] = len(tokens)
+	result['NWORDS'] = len(wordforms)
 	result['WORDLEN'] = mean(map(len, wordforms)) if wordforms else None
 	return result
 
@@ -426,76 +421,62 @@ def sentencemetrics(sentences):
 	"""Return dict of complexity metrics with results for each sentence."""
 	result = {}
 	result['LEN'] = [len(sent) for sent in sentences]
-	# Maximum number of dependency edges between any token and the root.
-	result['DEPTH'] = [dependencydepth(sent) for sent in sentences]
-	# Ignore certain relations, following Chen and Gerdes (2017, p. 57)
-	# http://www.aclweb.org/anthology/W17-6508
-	exclude = ('fixed', 'flat', 'conj', 'punct')
 	# Gibson (1998) http://dx.doi.org/10.1016/S0010-0277(98)00034-1
 	# Liu (2008) https://hdl.handle.net/10371/70907
 	# mean dependency distance
-	result['MDD'] = [
-			mean(abs(line[ID] - line[HEAD]) for line in sent
-				if line[DEPREL] not in exclude)
-			for sent in sentences]
-	# Maximum dependency spans. Unlike MDD, these exclude only punctuation
-	# and the artificial root link.
-	dependencydistances = [
-			[abs(line[ID] - line[HEAD]) for line in sent
-				if line[DEPREL].split(':', 1)[0] not in ('punct', 'root')]
-			for sent in sentences]
+	links = [dependencylinks(sent) for sent in sentences]
+	result['MDD'] = [mean(abs(line[ID] - line[HEAD]) for line in sentlinks)
+			if sentlinks else None for sentlinks in links]
+	# Lei & Jockers (2018): https://doi.org/10.1080/09296174.2018.1504615
+	# normalized dependency distance
+	result['NDD'] = []
+	for mdd, sent in zip(result['MDD'], sentences):
+		roots = [line for line in sent if baserelation(line) == 'root']
+		result['NDD'].append(abs(log(mdd / sqrt(roots[0][ID] * len(sent))))
+				if mdd is not None and roots else None)
+	# proportion of adjacent dependencies
+	# https://doi.org/10.1016/j.langsci.2016.09.006
+	result['ADJD'] = [mean(abs(line[ID] - line[HEAD]) == 1
+			for line in sentlinks) if sentlinks else None for sentlinks in links]
+	# dependency direction: proportion of left dependents
+	# http://www.aclweb.org/anthology/W17-6508
+	result['LEFT'] = [mean(line[ID] < line[HEAD] for line in sentlinks)
+			if sentlinks else None for sentlinks in links]
+	# Maximum number of dependency edges between any token and the root.
+	result['DEPTH'] = [dependencydepth(sent) for sent in sentences]
+	# Maximum dependency spans use the same links as MDD and NDD.
+	dependencydistances = [[abs(line[ID] - line[HEAD])
+			for line in sentlinks] for sentlinks in links]
 	result['AVGMDD'] = [max(distances, default=0)
 			for distances in dependencydistances]
 	# MAXMDD has the same sentence-level values as AVGMDD, but is aggregated
 	# with max() instead of mean() at document level.
 	result['MAXMDD'] = result['AVGMDD']
-	# Lei & Jockers (2018): https://doi.org/10.1080/09296174.2018.1504615
-	# normalized dependency distance
-	result['NDD'] = [
-		abs(log(mdd
-				/ sqrt(
-					([line[DEPREL] for line in sent].index('root') + 1)
-					* len(sent))))
-		for mdd, sent in zip(result['MDD'], sentences)]
-	# proportion of adjacent dependencies
-	# https://doi.org/10.1016/j.langsci.2016.09.006
-	result['ADJD'] = [mean(abs(line[ID] - line[HEAD]) == 1 for line in sent)
-			for sent in sentences]
-	# dependency direction: proportion of left dependents
-	# http://www.aclweb.org/anthology/W17-6508
-	result['LEFT'] = [mean(line[ID] < line[HEAD] for line in sent)
-			for sent in sentences]
 	# nominal modifiers;
 	# attempt to measure phrasal complexity (as opposed to clausal complexity).
 	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
-	result['MOD'] = [mean(line[DEPREL] == 'nmod' for line in sent)
+	result['MOD'] = [mean(baserelation(line) == 'nmod' for line in sent)
 			for sent in sentences]
 	# number of clauses per sentence; https://doi.org/10.1007/s11145-007-9107-5
 	result['CLS'] = [1 + sum(line[UPOS] == 'VERB' for line in sent)
 			for sent in sentences]
-	# avg clause len (clauses/words) https://aclanthology.org/2020.lrec-1.883
-	result['CLL'] = [
-			len(sent) / max(1, sum(line[UPOS] == 'VERB' for line in sent))
-			for sent in sentences]
+	# avg clause len (words/predicate) https://aclanthology.org/2020.lrec-1.883
+	predicates = [predicatecount(sent) for sent in sentences]
+	result['CLL'] = [len(sent) / count if count else None
+			for sent, count in zip(sentences, predicates)]
 	# lexical density: ratio of content words over total number of words
 	# https://aclanthology.org/2020.lrec-1.883
-	content = ('ADJ', 'ADV', 'INTJ', 'NOUN', 'PROPN', 'VERB')
+	content = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
 	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
 			for sent in sentences]
-	result['PRED'] = [sum(
-			line[UPOS] == 'VERB' or any(
-					child[HEAD] == line[ID]
-					and child[DEPREL].split(':', 1)[0] == 'cop'
-					for child in sent)
-			for line in sent)
-			for sent in sentences]
+	result['PRED'] = predicates
 	roots = [[line for line in sent if line[HEAD] == 0] for sent in sentences]
 	result['VBROOT'] = [mean(line[UPOS] == 'VERB' for line in sentroots)
 			for sentroots in roots]
 	result['PREDROOT'] = [mean(
 			line[UPOS] == 'VERB' or any(
 					child[HEAD] == line[ID]
-					and child[DEPREL].split(':', 1)[0] == 'cop'
+					and baserelation(child) == 'cop'
 					for child in sent)
 			for line in sentroots)
 			for sent, sentroots in zip(sentences, roots)]
@@ -509,7 +490,7 @@ def sentencemetrics(sentences):
 				('nsubj', 'SBJPRE', 'SBJPOST'),
 				('obj', 'OBJPRE', 'OBJPOST')):
 			dependents = [line for line in sent
-					if line[DEPREL].split(':', 1)[0] == relation]
+					if baserelation(line) == relation]
 			result[before].append(mean(line[ID] < line[HEAD]
 					for line in dependents) if dependents else None)
 			result[after].append(mean(line[ID] > line[HEAD]
@@ -541,10 +522,11 @@ def countmorph(sentences, feature, postags):
 
 
 def counttags(sentences):
-	"""Count POS, dependency, and selected morphology features."""
+	"""Count POS, base dependency, and selected morphology features."""
 	numtokens = sum(len(sent) for sent in sentences)
 	postags = Counter(line[UPOS] for sent in sentences for line in sent)
-	deptags = Counter(line[DEPREL] for sent in sentences for line in sent)
+	deptags = Counter(baserelation(line)
+			for sent in sentences for line in sent)
 	tags = {a: postags[a] / numtokens for a in POSTAGS}
 	tags.update({a: deptags[a] / numtokens for a in DEPTAGS})
 	for feat in VERBFEATS:
@@ -562,6 +544,28 @@ def summarizedmetrics(sentences, lang, lowfreq, highfreq):
 				if values else None)
 	result.update(documentmetrics(sentences, lang, lowfreq, highfreq))
 	result.update(counttags(sentences))
+	# Pool proportions over the observations they describe instead of giving
+	# every sentence equal weight.
+	tokens = [line for sentence in sentences for line in sentence]
+	links = [line for sentence in sentences for line in dependencylinks(sentence)]
+	result['ADJD'] = (mean(abs(line[ID] - line[HEAD]) == 1 for line in links)
+			if links else None)
+	result['LEFT'] = (mean(line[ID] < line[HEAD] for line in links)
+			if links else None)
+	result['MOD'] = (mean(baserelation(line) == 'nmod' for line in tokens)
+			if tokens else None)
+	content = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
+	result['LXD'] = (mean(line[UPOS] in content for line in tokens)
+			if tokens else None)
+	npredicates = sum(predicatecount(sentence) for sentence in sentences)
+	result['CLL'] = len(tokens) / npredicates if npredicates else None
+	for relation, before, after in (
+			('nsubj', 'SBJPRE', 'SBJPOST'), ('obj', 'OBJPRE', 'OBJPOST')):
+		dependents = [line for line in tokens if baserelation(line) == relation]
+		result[before] = (mean(line[ID] < line[HEAD] for line in dependents)
+				if dependents else None)
+		result[after] = (mean(line[ID] > line[HEAD] for line in dependents)
+				if dependents else None)
 	arities = [arity for sentence in sentences for arity in verbarities(sentence)]
 	if arities:
 		# Use the same verb-weighted population for the mean and distribution.
@@ -663,12 +667,12 @@ def main():
 	elif '--output' in opts:
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
-		selection = ['NSENT', 'NTOK', 'WORDLEN', 'LEN', 'LENVAR', 'MDD',
-				'AVGMDD', 'MAXMDD', 'NDD', 'DEPTH', 'ADJD', 'LEFT', 'MOD',
-				'CLS', 'CLL', 'PRED', 'VBROOT', 'PREDROOT', 'VBEDGES', 'SBJPRE',
-				'SBJPOST', 'OBJPRE', 'OBJPOST', 'LXD', 'MTLD', 'LOWF',
-				'HIGHF', 'ZIPF', 'WFCOV']
-		print(result.loc[:, selection].round(3))  # skip tags
+		selection = ['NSENT', 'NWORDS', 'WORDLEN', 'LEN', 'LENVAR', 'MDD',
+				'NDD', 'ADJD', 'LEFT', 'DEPTH', 'AVGMDD', 'MAXMDD', 'MOD',
+				'CLS', 'CLL', 'PRED', 'VBROOT', 'PREDROOT', 'VBEDGES',
+				'SBJPRE', 'SBJPOST', 'OBJPRE', 'OBJPOST', 'LXD', 'MTLD',
+				'LOWF', 'HIGHF', 'ZIPF', 'WFCOV']
+		print(result.loc[:, selection].round(3).T)  # skip tags
 
 
 if __name__ == '__main__':

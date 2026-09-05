@@ -119,6 +119,23 @@ def test_dependency_depth():
 	assert udstyle.sentencemetrics([chain, star])['DEPTH'] == [3, 1]
 
 
+def test_dependency_metrics_exclude_artificial_and_nonsyntagmatic_links():
+	sent = [
+		[1, 'dependent', '_', 'NOUN', '_', '_', 4, 'nsubj', '_', '_'],
+		[2, 'fixed', '_', 'X', '_', '_', 4, 'fixed', '_', '_'],
+		[3, 'flat', '_', 'PROPN', '_', '_', 4, 'flat:name', '_', '_'],
+		[4, 'root', '_', 'VERB', '_', '_', 0, 'root', '_', '_'],
+		[5, 'conjunct', '_', 'VERB', '_', '_', 1, 'conj', '_', '_'],
+	]
+	metrics = udstyle.sentencemetrics([sent])
+	assert metrics['MDD'] == [3]
+	assert metrics['AVGMDD'] == [3]
+	assert metrics['MAXMDD'] == [3]
+	assert metrics['ADJD'] == [0]
+	assert metrics['LEFT'] == [1]
+	assert metrics['NDD'] == [pytest.approx(abs(udstyle.log(3 / (20 ** .5))))]
+
+
 def test_phase_one_document_and_dependency_metrics():
 	chain = sentence(4)
 	star = sentence(3)
@@ -126,7 +143,7 @@ def test_phase_one_document_and_dependency_metrics():
 		token[udstyle.HEAD] = 1
 	metrics = udstyle.summarizedmetrics([chain, star], 'en', 3.0, 4.0)
 	assert metrics['NSENT'] == 2
-	assert metrics['NTOK'] == 7
+	assert metrics['NWORDS'] == 7
 	assert metrics['WORDLEN'] == pytest.approx(2)
 	assert metrics['AVGMDD'] == pytest.approx((1 + 2) / 2)
 	assert metrics['MAXMDD'] == 2
@@ -138,7 +155,7 @@ def test_word_length_always_excludes_punctuation():
 	tokens[1][udstyle.FORM] = '...'
 	tokens[1][udstyle.UPOS] = 'PUNCT'
 	metrics = udstyle.documentmetrics([tokens], 'en', 3.0, 4.0)
-	assert metrics['NTOK'] == 2
+	assert metrics['NWORDS'] == 1
 	assert metrics['WORDLEN'] == 4
 
 
@@ -180,14 +197,36 @@ def test_document_verb_edges_is_weighted_by_verbal_heads():
 	assert metrics['VBEDGE1'] == pytest.approx(3 / 5)
 
 
+def test_document_proportions_are_pooled():
+	short = sentence(2)
+	long = sentence(4)
+	for token in long[1:]:
+		token[udstyle.HEAD] = 1
+	metrics = udstyle.summarizedmetrics([short, long], 'en', 3.0, 4.0)
+	# Two of four links are adjacent. A sentence macro-average would be 2/3.
+	assert metrics['ADJD'] == pytest.approx(1 / 2)
+
+
+def test_tag_distributions_use_base_relations_and_omit_punctuation():
+	tokens = sentence(2)
+	tokens[0][udstyle.DEPREL] = 'nsubj:pass'
+	tokens[1][udstyle.UPOS] = 'PUNCT'
+	tokens[1][udstyle.DEPREL] = 'punct'
+	tags = udstyle.counttags([tokens])
+	assert tags['nsubj'] == pytest.approx(0.5)
+	assert 'nsubj:pass' not in tags
+	assert 'PUNCT' not in tags
+	assert 'punct' not in tags
+
+
 def test_example_data():
 	result = udstyle.analyze(
-			'tests/example.conllu', 'en', 3.0, 4.0,
-			excludepunct=False).iloc[0]
+			'tests/example.conllu', 'en', 3.0, 4.0).iloc[0]
 	assert result['NSENT'] == 3
-	assert result['NTOK'] == 25
+	assert result['NWORDS'] == 22
 	assert result['WORDLEN'] == pytest.approx(5.363636363636363)
 	assert result['PRED'] == pytest.approx(5 / 3)
+	assert result['CLL'] == pytest.approx(22 / 5)
 	assert result['VBEDGES'] == pytest.approx(3.25)
 	assert result['VBEDGE2'] == pytest.approx(0.25)
 	assert result['VBEDGE3'] == pytest.approx(0.25)

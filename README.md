@@ -16,7 +16,7 @@ Usage: python3 udstyle.py [OPTIONS] FILE...
   --persentence         report per sentence results, not mean per document
 Reported metrics:
   - NSENT:  number of sentences.
-  - NTOK:   number of tokens (excluding punctuation).
+  - NWORDS: number of syntactic words (excluding punctuation).
   - LEN:    mean sentence length in words (excluding punctuation).
   - LENVAR: coefficient of variation of sentence lengths
   - WORDLEN: mean word length in characters.
@@ -29,7 +29,7 @@ Reported metrics:
   - MAXMDD: maximum dependency distance in the document.
   - MOD:    nominal modifiers (Biber & Gray, 2010).
   - CLS:    number of clauses per sentence.
-  - CLL:    average clause length (clauses/words)
+  - CLL:    average clause length (words/predicate)
   - PRED:   number of verbal or copular predicates per sentence.
   - VBROOT: proportion of sentence roots that are verbs.
   - PREDROOT: proportion of roots that are verbs or copular predicates.
@@ -46,8 +46,36 @@ Reported metrics:
   - POS/DEP tag frequencies and distributions of verb features (only with --output)
 Example:
 $ python3 udstyle.py --lang=en --parse README.md
-                 LEN    MDD    NDD  DEPTH   ADJD   LEFT    MOD   CLS    CLL    LXD    MTLD   LOWF  HIGHF   ZIPF  WFCOV  LENVAR
-README.conllu  11.24  2.085  0.807   3.38  0.498  0.492  0.064  2.26  7.077  0.691  41.897  0.169  0.671  4.394  0.932   0.746
+          README.conllu
+NSENT            75.000
+NWORDS          923.000
+WORDLEN           5.568
+LEN              12.307
+LENVAR            0.698
+MDD               2.279
+NDD               0.890
+ADJD              0.456
+LEFT              0.653
+DEPTH             3.613
+AVGMDD            6.413
+MAXMDD           48.000
+MOD               0.093
+CLS               2.187
+CLL               9.230
+PRED              1.333
+VBROOT            0.453
+PREDROOT          0.560
+VBEDGES           1.888
+SBJPRE            1.000
+SBJPOST           0.000
+OBJPRE            0.000
+OBJPOST           1.000
+LXD               0.653
+MTLD             47.181
+LOWF              0.199
+HIGHF             0.654
+ZIPF              4.430
+WFCOV             0.901
 
 $ python3 udstyle.py --lang=nl UD_Dutch-LassySmall/*.conllu
 [...]
@@ -77,6 +105,18 @@ Dynamic `VBEDGE0`, `VBEDGE1`, ... columns give the proportion of lexical verbs
 with the corresponding number of dependents. As with `VBEDGES`, only `VERB`
 heads are included, including those with zero dependents; `aux`, `punct`, and
 `cop` dependents are excluded.
+
+MDD, NDD, AVGMDD, MAXMDD, ADJD, and LEFT consistently exclude `root`,
+`punct`, `fixed`, `flat`, and `conj` relations. Document MDD and NDD are means
+of their sentence-level values. ADJD and LEFT are pooled over eligible links;
+MOD, LXD, subject order, and object order are pooled over their corresponding
+word or relation populations. CLL is the number of words divided by the number
+of verbal or copular predicates.
+
+In the full output, only the base dependency labels are reported; i.e.,
+subtypes such as `nsubj:pass` are collapsed into the base relation `nsubj`.
+Punctuation is removed before analysis, so `PUNCT` and `punct` columns are not
+reported.
 
 With `--chunksize=N`, each input file is divided into consecutive chunks of
 approximately N words, with boundaries rounded to the nearest sentence
