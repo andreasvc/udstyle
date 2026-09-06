@@ -3,11 +3,12 @@
 Compute complexity metrics from [Universal Dependencies](https://universaldependencies.org/).
 Input maybe be `.conllu` files, or plain text files that will be parsed by
 [Stanza](https://stanfordnlp.github.io/stanza/) when `--parse` is specified.
-The language must be specified with `--lang`.
+Specify a language with `--lang` to report wordfreq metrics. A language is
+required when `--parse` is specified.
 
 ```
 Usage: python3 udstyle.py [OPTIONS] FILE...
-  --lang=LANG           two-letter language code (required)
+  --lang=LANG           language code for Stanza and wordfreq
   --parse               parse texts with Stanza
   --chunksize=N         divide input into chunks of about N words
   --lowfreq=ZIPF        low-frequency threshold (default: 3.0 large/3.5 small)
@@ -106,6 +107,12 @@ HIGHF is the proportion at or above the threshold given with `--highfreq`
 ZIPF is the mean frequency of lemmas known to wordfreq, while WFCOV reports the
 proportion with a known frequency. A wordfreq score of zero is treated as
 unknown.
+
+When `--lang` is omitted, or wordfreq does not support the requested language,
+LOWF, HIGHF, ZIPF, and WFCOV are omitted. Other metrics, including MTLD, remain
+available. Unsupported wordfreq languages produce a warning. `--lang` accepts
+the language codes understood by Stanza and wordfreq, including more specific
+BCP 47 codes where supported.
 
 Full output also includes dynamic `feat=value` columns for values observed in
 the UD morphological features of verbs. Each value is reported as a

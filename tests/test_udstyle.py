@@ -1,6 +1,23 @@
+import sys
+
 import pytest
 
 import udstyle
+
+
+def test_cli_without_arguments_shows_full_help(monkeypatch, capsys):
+	monkeypatch.setattr(sys, 'argv', ['udstyle.py'])
+	udstyle.main()
+	without_arguments = capsys.readouterr().out
+	monkeypatch.setattr(sys, 'argv', ['udstyle.py', '--help'])
+	with pytest.raises(SystemExit, match='0'):
+		udstyle.main()
+	assert without_arguments == capsys.readouterr().out
+	assert without_arguments.startswith(
+			'Compute complexity metrics from Universal Dependencies.\n\nusage:')
+	assert '--lang=LANG' in without_arguments
+	assert ('CoNLL-U (.conllu) file, or plain text file with --parse'
+			in without_arguments)
 
 
 def sentence(length, upos='NOUN', lemma_prefix='lemma'):
@@ -44,6 +61,32 @@ def test_low_frequency_threshold(monkeypatch):
 	assert udstyle.defaultlowfreq('small') == 3.5
 	with pytest.raises(ValueError, match='canonical language code'):
 		udstyle.defaultlowfreq('alias')
+
+
+def test_wordfreq_language_accepts_specific_codes():
+	assert udstyle.wordfreqlanguage('cmn-Hans') == 'zh'
+	assert udstyle.wordfreqlanguage('sr') == 'sh'
+	assert udstyle.wordfreqlanguage('af') is None
+	assert udstyle.wordfreqlanguage('xx-invalid') is None
+
+
+def test_no_language_omits_wordfreq_metrics():
+	metrics = udstyle.documentmetrics([sentence(1)], None, None, 4.0)
+	assert 'MTLD' in metrics
+	assert not {'LOWF', 'HIGHF', 'ZIPF', 'WFCOV'} & metrics.keys()
+
+
+def test_compare_warns_and_omits_unsupported_language(monkeypatch):
+	monkeypatch.setattr(udstyle, 'conllureader',
+			lambda filename, excludepunct: [sentence(1)])
+	with pytest.warns(UserWarning, match='omitting LOWF, HIGHF, ZIPF, and WFCOV'):
+		result = udstyle.compare(['sample.conllu'], 'xx-invalid')
+	assert not {'LOWF', 'HIGHF', 'ZIPF', 'WFCOV'} & set(result.columns)
+
+
+def test_parse_requires_language():
+	with pytest.raises(ValueError, match='--lang is required with --parse'):
+		udstyle.compare(['sample.txt'], parse=True)
 
 
 def test_analyze_returns_one_row_per_chunk(monkeypatch):

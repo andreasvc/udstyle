@@ -1,29 +1,15 @@
-"""Compute complexity metrics from Universal Dependencies.
-
-Usage: python3 udstyle.py [OPTIONS] FILE...
-  --lang=LANG           two-letter language code (required)
-  --parse               parse texts with Stanza
-  --chunksize=N         divide input into chunks of about N words
-  --lowfreq=ZIPF        low-frequency threshold (default: 3.0 large/3.5 small)
-  --highfreq=ZIPF       high-frequency Zipf threshold (default: 4.0)
-  --output=FILENAME     write result to a tab-separated file.
-  --persentence         report per sentence results, not mean per document
-
-Examples:
-$ python3 udstyle.py --lang=en --parse README.md
-$ python3 udstyle.py --lang=nl UD_Dutch-LassySmall/*.conllu
-
-See README.md for explanation of the reported metrics.
-"""
-import getopt
+"""Compute complexity metrics from Universal Dependencies."""
+import argparse
 import os
 import subprocess
 import sys
+import warnings
 from collections import Counter
 from contextlib import contextmanager
 from math import log, sqrt
 
 import pandas as pd
+from langcodes import closest_match
 from wordfreq import available_languages, zipf_frequency
 
 # TODO: extract POS and syntactic n-grams frequencies
@@ -285,6 +271,13 @@ def defaultlowfreq(lang):
 	return LOWFREQ if lang in available_languages('large') else LOWFREQSMALL
 
 
+def wordfreqlanguage(lang):
+	"""Return wordfreq's closest supported language code, or None."""
+	match, _ = closest_match(
+			lang, list(available_languages('best')), max_distance=10)
+	return None if match == 'und' else match
+
+
 def getmtld(words, threshold=MTLDTHRESHOLD):
 	"""Return the Measure of Textual Lexical Diversity for a token list."""
 	# Adapted from LexicalRichness 0.5.1's MIT-licensed mtld method:
@@ -510,15 +503,16 @@ def documentmetrics(sentences, lang, lowfreq, highfreq):
 	lemmas = [line[LEMMA].lower() for sent in sentences for line in sent
 			if line[UPOS] in CONTENTPOS and line[LEMMA] not in EMPTY]
 	result['MTLD'] = getmtld(lemmas) if len(lemmas) >= MTLDMINWORDS else None
-	frequencies = [zipf_frequency(lemma, lang) for lemma in lemmas]
-	result['LOWF'] = (mean(frequency < lowfreq for frequency in frequencies)
-			if frequencies else None)
-	result['HIGHF'] = (mean(frequency >= highfreq for frequency in frequencies)
-			if frequencies else None)
-	known = [frequency for frequency in frequencies if frequency > 0]
-	result['ZIPF'] = mean(known) if known else None
-	result['WFCOV'] = (mean(frequency > 0 for frequency in frequencies)
-			if frequencies else None)
+	if lang is not None:
+		frequencies = [zipf_frequency(lemma, lang) for lemma in lemmas]
+		result['LOWF'] = (mean(frequency < lowfreq for frequency in frequencies)
+				if frequencies else None)
+		result['HIGHF'] = (mean(frequency >= highfreq for frequency in frequencies)
+				if frequencies else None)
+		known = [frequency for frequency in frequencies if frequency > 0]
+		result['ZIPF'] = mean(known) if known else None
+		result['WFCOV'] = (mean(frequency > 0 for frequency in frequencies)
+				if frequencies else None)
 	result['NSENT'] = len(sentences)
 	tokens = [line for sent in sentences for line in sent]
 	wordforms = [line[FORM] for line in tokens if line[UPOS] != 'PUNCT']
@@ -744,79 +738,101 @@ def analyze(filename, lang, lowfreq, highfreq,
 			for name, chunk in chunks}).T
 
 
-def compare(filenames, lang, parse=False, excludepunct=True,
+def compare(filenames, lang=None, parse=False, excludepunct=True,
 		persentence=False, chunksize=None, lowfreq=None,
 		highfreq=HIGHFREQ):
 	"""Collect statistics for multiple files."""
-	if lowfreq is None:
-		lowfreq = defaultlowfreq(lang)
 	if parse:
+		if lang is None:
+			raise ValueError('--lang is required with --parse')
 		filenames = parsefiles(filenames, lang)
+	wordfreqlang = wordfreqlanguage(lang) if lang is not None else None
+	if lang is not None and wordfreqlang is None:
+		warnings.warn(f'wordfreq does not support {lang!r}; '
+				'omitting LOWF, HIGHF, ZIPF, and WFCOV', stacklevel=2)
+	if wordfreqlang is not None and lowfreq is None:
+		lowfreq = defaultlowfreq(wordfreqlang)
 	if persentence and chunksize is not None:
 		raise ValueError('--chunksize cannot be combined with --persentence')
 	return pd.concat([
-			analyze(filename, lang, lowfreq, highfreq,
+			analyze(filename, wordfreqlang, lowfreq, highfreq,
 				excludepunct=excludepunct, persentence=persentence,
 				chunksize=chunksize)
 			for filename in filenames], ignore_index=persentence)
 
 
+class HelpFormatter(argparse.RawDescriptionHelpFormatter):
+	"""Format option values as ``--option=VALUE``."""
+	def _format_action_invocation(self, action):
+		if not action.option_strings or action.nargs == 0:
+			return super()._format_action_invocation(action)
+		metavar = self._format_args(
+				action, self._get_default_metavar_for_optional(action))
+		return ', '.join(f'{option}={metavar}'
+				for option in action.option_strings)
+
+
+class ArgumentParser(argparse.ArgumentParser):
+	"""Put the program description before its usage."""
+	def format_help(self):
+		usage, description, remainder = super().format_help().split('\n\n', 2)
+		return f'{description}\n\n{usage}\n\n{remainder}'
+
+
 def main():
 	"""CLI."""
+	parser = ArgumentParser(
+			description=__doc__, usage='%(prog)s [OPTIONS] FILE...',
+			formatter_class=HelpFormatter,
+			epilog='''Examples:
+  $ python3 udstyle.py --lang=en --parse README.md
+  $ python3 udstyle.py --lang=nl UD_Dutch-LassySmall/*.conllu
+
+See README.md for explanation of the reported metrics.''')
+	parser.add_argument('--lang', metavar='LANG', help=(
+			'language code for Stanza and wordfreq'))
+	parser.add_argument('--parse', action='store_true',
+			help='parse texts with Stanza')
+	group = parser.add_mutually_exclusive_group()
+	group.add_argument('--chunksize', type=int, metavar='N',
+			help='divide input into chunks of about N words')
+	group.add_argument('--persentence', action='store_true',
+			help='report per sentence results, not mean per document')
+	parser.add_argument('--lowfreq', type=float, metavar='ZIPF',
+			help='low-frequency threshold (default: 3.0 large/3.5 small)')
+	parser.add_argument('--highfreq', type=float, default=HIGHFREQ,
+			metavar='ZIPF', help='high-frequency Zipf threshold (default: 4.0)')
+	parser.add_argument('--output', metavar='FILENAME',
+			help='write result to a tab-separated file')
+	parser.add_argument('files', nargs='+', metavar='FILE', help=(
+			'CoNLL-U (.conllu) file, or plain text file with --parse'))
+	if len(sys.argv) == 1:
+		parser.print_help()
+		return
+	args = parser.parse_args()
+	if args.parse and args.lang is None:
+		parser.error('--lang is required with --parse')
+	if args.chunksize is not None and args.chunksize <= 0:
+		parser.error('--chunksize must be a positive integer')
 	try:
-		opts, args = getopt.gnu_getopt(
-				sys.argv[1:], '',
-				['parse', 'persentence', 'output=', 'lang=', 'chunksize=',
-				'lowfreq=', 'highfreq='])
-		opts = dict(opts)
-	except getopt.GetoptError:
-		print(__doc__)
-		return
-	if not args:
-		print(__doc__)
-		return
-	if '--lang' not in opts:
-		print('--lang=LANG is required', file=sys.stderr)
-		return
-	try:
-		chunksize = (int(opts['--chunksize'])
-				if '--chunksize' in opts else None)
-		if chunksize is not None and chunksize <= 0:
-			raise ValueError
-	except ValueError:
-		print('--chunksize must be a positive integer', file=sys.stderr)
-		return
-	lowfreq = None
-	if '--lowfreq' in opts:
-		try:
-			lowfreq = float(opts['--lowfreq'])
-		except ValueError:
-			print('--lowfreq must be a number', file=sys.stderr)
-			return
-	try:
-		highfreq = float(opts.get('--highfreq', HIGHFREQ))
-	except ValueError:
-		print('--highfreq must be a number', file=sys.stderr)
-		return
-	if '--persentence' in opts and chunksize is not None:
-		print('--chunksize cannot be combined with --persentence',
-				file=sys.stderr)
-		return
-	try:
-		result = compare(
-				args, opts['--lang'], parse='--parse' in opts,
-				persentence='--persentence' in opts,
-				chunksize=chunksize, lowfreq=lowfreq, highfreq=highfreq)
+		with warnings.catch_warnings(record=True) as caught:
+			warnings.simplefilter('always')
+			result = compare(
+					args.files, args.lang, parse=args.parse,
+					persentence=args.persentence, chunksize=args.chunksize,
+					lowfreq=args.lowfreq, highfreq=args.highfreq)
 	except ValueError as error:
 		print(error, file=sys.stderr)
 		return
-	if '--persentence' in opts:
-		if '--output' in opts:
-			result.to_csv(opts.get('--output'), sep='\t')
+	for warning in caught:
+		print(f'warning: {warning.message}', file=sys.stderr)
+	if args.persentence:
+		if args.output:
+			result.to_csv(args.output, sep='\t')
 		else:
 			print(result)
-	elif '--output' in opts:
-		result.to_csv(opts.get('--output'), sep='\t')
+	elif args.output:
+		result.to_csv(args.output, sep='\t')
 	else:
 		selection = ['NSENT', 'NWORDS', 'WORDLEN', 'LEN', 'LENVAR', 'MDD',
 				'NDD', 'ADJD', 'LEFT', 'DEPTH', 'AVGMDD', 'MAXMDD',
@@ -825,7 +841,8 @@ def main():
 				'VBROOT', 'PREDROOT', 'VBEDGES',
 				'SBJPRE', 'SBJPOST', 'OBJPRE', 'OBJPOST',
 				'LXD', 'MTLD', 'LOWF', 'HIGHF', 'ZIPF', 'WFCOV']
-		print(result.loc[:, selection].round(3).T)  # skip tags
+		print(result.loc[:, [name for name in selection
+				if name in result]].round(3).T)  # skip tags
 
 
 if __name__ == '__main__':
