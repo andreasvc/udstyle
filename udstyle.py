@@ -29,11 +29,14 @@ from wordfreq import available_languages, zipf_frequency
 # TODO: extract POS and syntactic n-grams frequencies
 # TODO: POS surprisal, requires training e.g. n-gram model on corpus
 
-DISTEXCLUDE = ('fixed', 'flat', 'conj', 'punct', 'root')
-SUBORDRELATIONS = ('acl', 'advcl', 'ccomp', 'csubj', 'xcomp')
-CONTENTPOS = ('ADJ', 'ADV', 'NOUN', 'VERB')
-CONTENTPROPN = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
-NOMINALPOS = ('NOUN', 'PROPN')
+EMPTY = {'', '_'}
+DISTEXCLUDE = {'fixed', 'flat', 'conj', 'punct', 'root'}
+SKIPEDGE = {'aux', 'punct', 'cop'}
+SUBORDRELATIONS = {'acl', 'advcl', 'ccomp', 'csubj', 'xcomp'}
+CONTENTPOS = {'ADJ', 'ADV', 'NOUN', 'VERB'}
+CONTENTPROPN = {'ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB'}
+NOMINALPOS = {'NOUN', 'PROPN'}
+VERBPOS = {'VERB', 'AUX'}
 MTLDMINWORDS, MTLDTHRESHOLD = 50, 0.72
 LOWFREQ, LOWFREQSMALL, HIGHFREQ = 3.0, 3.5, 4.0
 # Constants for UD field numbers:
@@ -415,9 +418,7 @@ def clauseanalysis(sentence):
 def verbarities(sentence):
 	"""Return arities of lexical verbs."""
 	verbalheads = [line for line in sentence if line[UPOS] == 'VERB']
-	return [sum(
-			child[HEAD] == head[ID]
-			and baserel(child) not in ('aux', 'punct', 'cop')
+	return [sum(child[HEAD] == head[ID] and baserel(child) not in SKIPEDGE
 			for child in sentence)
 				for head in verbalheads]
 
@@ -507,7 +508,7 @@ def documentmetrics(sentences, lang, lowfreq, highfreq):
 				len(lengths) - 1)
 		result['LENVAR'] = sqrt(variance) / avglen if avglen else None
 	lemmas = [line[LEMMA].lower() for sent in sentences for line in sent
-			if line[UPOS] in CONTENTPOS and line[LEMMA] not in ('', '_')]
+			if line[UPOS] in CONTENTPOS and line[LEMMA] not in EMPTY]
 	result['MTLD'] = getmtld(lemmas) if len(lemmas) >= MTLDMINWORDS else None
 	frequencies = [zipf_frequency(lemma, lang) for lemma in lemmas]
 	result['LOWF'] = (mean(frequency < lowfreq for frequency in frequencies)
@@ -632,7 +633,7 @@ def countmorph(sentences, feature, postags):
 	for sentence in sentences:
 		for token in sentence:
 			values = []
-			if token[FEATS] not in ('', '_'):
+			if token[FEATS] not in EMPTY:
 				for item in token[FEATS].split('|'):
 					name, separator, value = item.partition('=')
 					if separator and name == feature:
@@ -656,7 +657,7 @@ def counttags(sentences):
 	tags = {a: postags[a] / numtokens for a in POSTAGS}
 	tags.update({a: deptags[a] / numtokens for a in DEPTAGS})
 	for feat in VERBFEATS:
-		tags.update(countmorph(sentences, feat, ('VERB', 'AUX')))
+		tags.update(countmorph(sentences, feat, VERBPOS))
 	return tags
 
 
