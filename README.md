@@ -27,7 +27,11 @@ Reported metrics:
   - DEPTH:  maximum number of dependency edges between any token and the root.
   - AVGMDD: mean of the maximum dependency distance in each sentence.
   - MAXMDD: maximum dependency distance in the document.
-  - MOD:    nominal modifiers (Biber & Gray, 2010).
+  - SUBORD: proportion of clauses that are subordinate.
+  - SUBDEPTH: mean maximum depth of subordinate-clause chains.
+  - SUBPRE/SUBPOST: position of subordinate clauses relative to their heads.
+  - SBJPRE/SBJPOST: position of nominal subjects relative to their heads.
+  - OBJPRE/OBJPOST: position of objects relative to their heads.
   - CLS:    number of clauses per sentence.
   - CLL:    average clause length (words/predicate)
   - PRED:   number of verbal or copular predicates per sentence.
@@ -35,8 +39,10 @@ Reported metrics:
   - PREDROOT: proportion of roots that are verbs or copular predicates.
   - VBEDGES: mean number of dependents of lexical verbs.
   - VBEDGE*: distribution of lexical verbs by number of dependents.
-  - SBJPRE/SBJPOST: position of nominal subjects relative to their heads.
-  - OBJPRE/OBJPOST: position of objects relative to their heads.
+  - NMOD:   nominal modifiers (Biber & Gray, 2010).
+  - NMODDEPTH: mean maximum depth of nominal-modifier structures.
+  - NCOMPRATE: proportion of nouns and proper nouns in nominal compounds.
+  - NCOMPSIZE: mean size of nominal compound components.
   - LXD:    lexical density: ratio of content words over total number of words
   - MTLD:   Measure of Textual Lexical Diversity over content-word lemmas
   - LOWF:   proportion of content-word lemmas below the Zipf threshold
@@ -46,36 +52,43 @@ Reported metrics:
   - POS/DEP tag frequencies and distributions of verb features (only with --output)
 Example:
 $ python3 udstyle.py --lang=en --parse README.md
-          README.conllu
-NSENT            75.000
-NWORDS          923.000
-WORDLEN           5.568
-LEN              12.307
-LENVAR            0.698
-MDD               2.279
-NDD               0.890
-ADJD              0.456
-LEFT              0.653
-DEPTH             3.613
-AVGMDD            6.413
-MAXMDD           48.000
-MOD               0.093
-CLS               2.187
-CLL               9.230
-PRED              1.333
-VBROOT            0.453
-PREDROOT          0.560
-VBEDGES           1.888
-SBJPRE            1.000
-SBJPOST           0.000
-OBJPRE            0.000
-OBJPOST           1.000
-LXD               0.653
-MTLD             47.181
-LOWF              0.199
-HIGHF             0.654
-ZIPF              4.430
-WFCOV             0.901
+           README.conllu
+NSENT            100.000
+NWORDS          1143.000
+WORDLEN            5.582
+LEN               11.430
+LENVAR             0.641
+MDD                2.136
+NDD                0.835
+ADJD               0.464
+LEFT               0.644
+DEPTH              3.470
+AVGMDD             5.790
+MAXMDD            33.000
+SUBORD             0.298
+SUBDEPTH           1.059
+SUBPRE             0.054
+SUBPOST            0.946
+CLS                2.080
+CLL                9.218
+NMOD               0.095
+NMODDEPTH          1.181
+NCOMPRATE          0.344
+NCOMPSIZE          2.278
+PRED               1.240
+VBROOT             0.410
+PREDROOT           0.510
+VBEDGES            1.870
+SBJPRE             1.000
+SBJPOST            0.000
+OBJPRE             0.000
+OBJPOST            1.000
+LXD                0.649
+MTLD              50.048
+LOWF               0.200
+HIGHF              0.626
+ZIPF               4.413
+WFCOV              0.892
 
 $ python3 udstyle.py --lang=nl UD_Dutch-LassySmall/*.conllu
 [...]
@@ -109,7 +122,7 @@ heads are included, including those with zero dependents; `aux`, `punct`, and
 MDD, NDD, AVGMDD, MAXMDD, ADJD, and LEFT consistently exclude `root`,
 `punct`, `fixed`, `flat`, and `conj` relations. Document MDD and NDD are means
 of their sentence-level values. ADJD and LEFT are pooled over eligible links;
-MOD, LXD, subject order, and object order are pooled over their corresponding
+NMOD, LXD, subject order, and object order are pooled over their corresponding
 word or relation populations. CLL is the number of words divided by the number
 of verbal or copular predicates.
 
@@ -117,6 +130,22 @@ In the full output, only the base dependency labels are reported; i.e.,
 subtypes such as `nsubj:pass` are collapsed into the base relation `nsubj`.
 Punctuation is removed before analysis, so `PUNCT` and `punct` columns are not
 reported.
+
+NMOD is the proportion of words attached with a base `nmod` relation.
+NMODDEPTH averages the maximum number of recursive `nmod` edges in each
+maximal nominal-modifier structure; relation subtypes such as `nmod:poss` are
+included. Nominal coordination connects branches without increasing depth.
+NCOMPRATE is the proportion of `NOUN` and `PROPN` tokens participating in a
+nominal `compound` component, and NCOMPSIZE is the mean number of tokens in
+those maximal components. Other parts of speech and non-nominal compounds are
+excluded. Metrics whose structures are absent have depth or size 0.
+
+Subordinate clauses are identified by the base relations `acl`, `advcl`,
+`ccomp`, `csubj`, and `xcomp`. Coordinated clause heads inherit the status and
+depth of the clause they are coordinated with without adding an embedding
+level. SUBORD is pooled over clauses, SUBPRE and SUBPOST are pooled over
+subordinate clauses, and SUBDEPTH averages maximal top-level subordinate-chain
+depths. A document without subordinate clauses has SUBDEPTH 0.
 
 With `--chunksize=N`, each input file is divided into consecutive chunks of
 approximately N words, with boundaries rounded to the nearest sentence

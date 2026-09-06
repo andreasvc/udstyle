@@ -8,44 +8,12 @@ Usage: python3 udstyle.py [OPTIONS] FILE...
   --highfreq=ZIPF       high-frequency Zipf threshold (default: 4.0)
   --output=FILENAME     write result to a tab-separated file.
   --persentence         report per sentence results, not mean per document
-Reported metrics:
-  - NSENT:  number of sentences.
-  - NWORDS: number of syntactic words (excluding punctuation).
-  - LEN:    mean sentence length in words (excluding punctuation).
-  - LENVAR: coefficient of variation of sentence lengths
-  - WORDLEN: mean word length in characters.
-  - MDD:    mean dependency distance (Gibson, 1998).
-  - NDD:    normalized dependency distance (Lei & Jockers, 2018).
-  - ADJD:   proportion of adjacent dependencies.
-  - LEFT:   dependency direction: proportion of left dependents.
-  - DEPTH:  maximum number of dependency edges between any token and the root.
-  - AVGMDD: mean of the maximum dependency distance in each sentence.
-  - MAXMDD: maximum dependency distance in the document.
-  - MOD:    nominal modifiers (Biber & Gray, 2010).
-  - CLS:    number of clauses per sentence.
-  - CLL:    average clause length (words/predicate)
-  - PRED:   number of verbal or copular predicates per sentence.
-  - VBROOT: proportion of sentence roots that are verbs.
-  - PREDROOT: proportion of roots that are verbs or copular predicates.
-  - VBEDGES: mean number of dependents of lexical verbs.
-  - VBEDGE*: distribution of lexical verbs by number of dependents.
-  - SBJPRE/SBJPOST: position of nominal subjects relative to their heads.
-  - OBJPRE/OBJPOST: position of objects relative to their heads.
-  - LXD:    lexical density: ratio of content words over total number of words
-  - MTLD:   Measure of Textual Lexical Diversity over content-word lemmas
-  - LOWF:   proportion of content-word lemmas below the Zipf threshold
-  - HIGHF:  proportion of content-word lemmas at or above the Zipf threshold
-  - ZIPF:   mean Zipf frequency of known content-word lemmas
-  - WFCOV: proportion of content-word lemmas known to wordfreq
-  - POS/DEP tag frequencies and distributions of verb features (only with --output)
 
-Example:
+Examples:
 $ python3 udstyle.py --lang=en --parse README.md
-                 LEN    MDD    NDD  DEPTH   ADJD   LEFT    MOD   CLS    CLL    LXD    MTLD   LOWF  HIGHF   ZIPF  WFCOV  LENVAR
-README.conllu  11.24  2.085  0.807   3.38  0.498  0.492  0.064  2.26  7.077  0.691  41.897  0.169  0.671  4.394  0.932   0.746
-
 $ python3 udstyle.py --lang=nl UD_Dutch-LassySmall/*.conllu
-[...]
+
+See README.md for explanation of the reported metrics.
 """
 import getopt
 import os
@@ -61,10 +29,14 @@ from wordfreq import available_languages, zipf_frequency
 # TODO: extract POS and syntactic n-grams frequencies
 # TODO: POS surprisal, requires training e.g. n-gram model on corpus
 
-CONTENTPOS = ('NOUN', 'VERB', 'ADJ', 'ADV')
+DISTEXCLUDE = ('fixed', 'flat', 'conj', 'punct', 'root')
+SUBORDRELATIONS = ('acl', 'advcl', 'ccomp', 'csubj', 'xcomp')
+CONTENTPOS = ('ADJ', 'ADV', 'NOUN', 'VERB')
+CONTENTPROPN = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
+NOMINALPOS = ('NOUN', 'PROPN')
 MTLDMINWORDS, MTLDTHRESHOLD = 50, 0.72
 LOWFREQ, LOWFREQSMALL, HIGHFREQ = 3.0, 3.5, 4.0
-# Constants for field numbers:
+# Constants for UD field numbers:
 ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC = range(10)
 # https://universaldependencies.org/format.html
 # ID: Word index, integer starting at 1 for each new sentence; may be a range
@@ -352,27 +324,92 @@ def dependencydepth(sentence):
 	return maxdepth
 
 
-DISTANCEEXCLUDE = {'fixed', 'flat', 'conj', 'punct', 'root'}
-
-
-def baserelation(token):
+def baserel(token):
 	"""Return the universal base relation of a UD token."""
 	return token[DEPREL].split(':', 1)[0]
 
 
 def dependencylinks(sentence):
 	"""Return links included by all dependency-distance metrics."""
-	return [token for token in sentence
-			if baserelation(token) not in DISTANCEEXCLUDE]
+	return [token for token in sentence if baserel(token) not in DISTEXCLUDE]
 
 
 def predicatecount(sentence):
 	"""Count lexical-verbal and copular predicate heads."""
 	return sum(
 			token[UPOS] == 'VERB' or any(
-					child[HEAD] == token[ID] and baserelation(child) == 'cop'
+					child[HEAD] == token[ID] and baserel(child) == 'cop'
 					for child in sentence)
 			for token in sentence)
+
+
+def clauseanalysis(sentence):
+	"""Return clause heads, subordinate depths, governors, and chain depths."""
+	byid = {token[ID]: token for token in sentence}
+	clauses = {token[ID] for token in sentence
+			if (token[UPOS] == 'VERB'
+				or baserel(token) in SUBORDRELATIONS
+				or any(child[HEAD] == token[ID] and baserel(child) == 'cop'
+					for child in sentence))}
+
+	def parentclause(token):
+		current = byid.get(token[HEAD])
+		visited = set()
+		while current is not None and current[ID] not in visited:
+			if current[ID] in clauses:
+				return current
+			visited.add(current[ID])
+			current = byid.get(current[HEAD])
+		return None
+
+	depths, governors = {}, {}
+	def getdepth(tokenid, trail=None):
+		if tokenid in depths:
+			return depths[tokenid]
+		trail = set() if trail is None else trail
+		if tokenid in trail:
+			return 0
+		trail.add(tokenid)
+		token = byid[tokenid]
+		parent = parentclause(token)
+		if baserel(token) == 'conj' and parent is not None:
+			depth = getdepth(parent[ID], trail)
+			governors[tokenid] = governors.get(parent[ID], parent[HEAD])
+		elif baserel(token) in SUBORDRELATIONS:
+			depth = (getdepth(parent[ID], trail) if parent is not None else 0) + 1
+			governors[tokenid] = token[HEAD]
+		else:
+			depth = 0
+		depths[tokenid] = depth
+		trail.remove(tokenid)
+		return depth
+
+	for tokenid in clauses:
+		getdepth(tokenid)
+
+	chainroots = {}
+	def getchainroot(tokenid, trail=None):
+		if tokenid in chainroots:
+			return chainroots[tokenid]
+		trail = set() if trail is None else trail
+		if tokenid in trail:
+			return tokenid
+		trail.add(tokenid)
+		parent = parentclause(byid[tokenid])
+		if parent is not None and depths.get(parent[ID], 0) > 0:
+			root = getchainroot(parent[ID], trail)
+		else:
+			root = tokenid
+		chainroots[tokenid] = root
+		trail.remove(tokenid)
+		return root
+
+	chains = {}
+	for tokenid, depth in depths.items():
+		if depth:
+			root = getchainroot(tokenid)
+			chains[root] = max(chains.get(root, 0), depth)
+	return clauses, depths, governors, list(chains.values())
 
 
 def verbarities(sentence):
@@ -380,9 +417,81 @@ def verbarities(sentence):
 	verbalheads = [line for line in sentence if line[UPOS] == 'VERB']
 	return [sum(
 			child[HEAD] == head[ID]
-			and baserelation(child) not in ('aux', 'punct', 'cop')
+			and baserel(child) not in ('aux', 'punct', 'cop')
 			for child in sentence)
-			for head in verbalheads]
+				for head in verbalheads]
+
+
+def nominalmetrics(sentence):
+	"""Return nmod depths and nominal-compound membership and sizes."""
+	byid = {token[ID]: token for token in sentence}
+	# nmod contributes one level; nominal coordination connects branches
+	# without itself increasing their depth.
+	edges = [(token[HEAD], token[ID], 1) for token in sentence
+			if baserel(token) == 'nmod' and token[HEAD] in byid]
+	edges.extend((token[HEAD], token[ID], 0) for token in sentence
+			if (baserel(token) == 'conj' and token[UPOS] in NOMINALPOS
+				and token[HEAD] in byid
+				and byid[token[HEAD]][UPOS] in NOMINALPOS))
+	nmodnodes = {node for head, node, weight in edges if weight
+			for node in (head, node)}
+	adjacency = {}
+	for head, dependent, weight in edges:
+		adjacency.setdefault(head, []).append((dependent, weight))
+		adjacency.setdefault(dependent, [])
+
+	def maxdepth(node, trail=None):
+		trail = set() if trail is None else trail
+		if node in trail:
+			return 0
+		trail.add(node)
+		depth = max((weight + maxdepth(child, trail)
+				for child, weight in adjacency.get(node, ())), default=0)
+		trail.remove(node)
+		return depth
+
+	# Weak components give one maximal value for branching structures.
+	undirected = {}
+	for head, dependent, _ in edges:
+		undirected.setdefault(head, set()).add(dependent)
+		undirected.setdefault(dependent, set()).add(head)
+	depths, seen = [], set()
+	for start in nmodnodes:
+		if start in seen:
+			continue
+		component, stack = set(), [start]
+		while stack:
+			node = stack.pop()
+			if node not in component:
+				component.add(node)
+				stack.extend(undirected.get(node, ()))
+		seen.update(component)
+		dependents = {dependent for head, dependent, _ in edges
+				if head in component and dependent in component}
+		roots = component - dependents or component
+		depths.append(max(maxdepth(root) for root in roots))
+
+	# Nominal compounds are maximal undirected components of compound links.
+	compoundgraph = {}
+	for token in sentence:
+		head = byid.get(token[HEAD])
+		if (baserel(token) == 'compound' and head is not None
+				and token[UPOS] in NOMINALPOS and head[UPOS] in NOMINALPOS):
+			compoundgraph.setdefault(token[ID], set()).add(head[ID])
+			compoundgraph.setdefault(head[ID], set()).add(token[ID])
+	compounds, participants = [], set()
+	for start in compoundgraph:
+		if start in participants:
+			continue
+		component, stack = set(), [start]
+		while stack:
+			node = stack.pop()
+			if node not in component:
+				component.add(node)
+				stack.extend(compoundgraph.get(node, ()))
+		participants.update(component)
+		compounds.append(len(component))
+	return depths, participants, compounds
 
 
 def documentmetrics(sentences, lang, lowfreq, highfreq):
@@ -431,7 +540,7 @@ def sentencemetrics(sentences):
 	# normalized dependency distance
 	result['NDD'] = []
 	for mdd, sent in zip(result['MDD'], sentences):
-		roots = [line for line in sent if baserelation(line) == 'root']
+		roots = [line for line in sent if baserel(line) == 'root']
 		result['NDD'].append(abs(log(mdd / sqrt(roots[0][ID] * len(sent))))
 				if mdd is not None and roots else None)
 	# proportion of adjacent dependencies
@@ -452,11 +561,33 @@ def sentencemetrics(sentences):
 	# MAXMDD has the same sentence-level values as AVGMDD, but is aggregated
 	# with max() instead of mean() at document level.
 	result['MAXMDD'] = result['AVGMDD']
-	# nominal modifiers;
-	# attempt to measure phrasal complexity (as opposed to clausal complexity).
-	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
-	result['MOD'] = [mean(baserelation(line) == 'nmod' for line in sent)
-			for sent in sentences]
+	# Metrics for subordinates, subject/object position, and verb edges
+	result.update((metric, []) for metric
+			in ['SUBORD', 'SUBDEPTH', 'SUBPRE', 'SUBPOST', 'SBJPRE', 'SBJPOST',
+			'OBJPRE', 'OBJPOST', 'VBEDGES'])
+	for sent in sentences:
+		arities = verbarities(sent)
+		result['VBEDGES'].append(mean(arities) if arities else None)
+		for relation, before, after in (
+				('nsubj', 'SBJPRE', 'SBJPOST'),
+				('obj', 'OBJPRE', 'OBJPOST')):
+			dependents = [line for line in sent if baserel(line) == relation]
+			result[before].append(mean(line[ID] < line[HEAD]
+					for line in dependents) if dependents else None)
+			result[after].append(mean(line[ID] > line[HEAD]
+					for line in dependents) if dependents else None)
+		clauses, depths, governors, chains = clauseanalysis(sent)
+		subordinates = [tokenid for tokenid in clauses if depths[tokenid] > 0]
+		result['SUBORD'].append(
+				len(subordinates) / len(clauses) if clauses else None)
+		positions = [(tokenid, governors.get(tokenid))
+				for tokenid in subordinates if governors.get(tokenid) in {
+						token[ID] for token in sent}]
+		result['SUBPRE'].append(mean(tokenid < governor
+				for tokenid, governor in positions) if positions else None)
+		result['SUBPOST'].append(mean(tokenid > governor
+				for tokenid, governor in positions) if positions else None)
+		result['SUBDEPTH'].append(mean(chains) if chains else 0)
 	# number of clauses per sentence; https://doi.org/10.1007/s11145-007-9107-5
 	result['CLS'] = [1 + sum(line[UPOS] == 'VERB' for line in sent)
 			for sent in sentences]
@@ -464,37 +595,33 @@ def sentencemetrics(sentences):
 	predicates = [predicatecount(sent) for sent in sentences]
 	result['CLL'] = [len(sent) / count if count else None
 			for sent, count in zip(sentences, predicates)]
-	# lexical density: ratio of content words over total number of words
-	# https://aclanthology.org/2020.lrec-1.883
-	content = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
-	result['LXD'] = [sum(line[UPOS] in content for line in sent) / len(sent)
-			for sent in sentences]
 	result['PRED'] = predicates
 	roots = [[line for line in sent if line[HEAD] == 0] for sent in sentences]
 	result['VBROOT'] = [mean(line[UPOS] == 'VERB' for line in sentroots)
 			for sentroots in roots]
 	result['PREDROOT'] = [mean(
 			line[UPOS] == 'VERB' or any(
-					child[HEAD] == line[ID]
-					and baserelation(child) == 'cop'
+					child[HEAD] == line[ID] and baserel(child) == 'cop'
 					for child in sent)
 			for line in sentroots)
 			for sent, sentroots in zip(sentences, roots)]
-	result['VBEDGES'] = []
-	result['SBJPRE'], result['SBJPOST'] = [], []
-	result['OBJPRE'], result['OBJPOST'] = [], []
-	for sent in sentences:
-		arities = verbarities(sent)
-		result['VBEDGES'].append(mean(arities) if arities else None)
-		for relation, before, after in (
-				('nsubj', 'SBJPRE', 'SBJPOST'),
-				('obj', 'OBJPRE', 'OBJPOST')):
-			dependents = [line for line in sent
-					if baserelation(line) == relation]
-			result[before].append(mean(line[ID] < line[HEAD]
-					for line in dependents) if dependents else None)
-			result[after].append(mean(line[ID] > line[HEAD]
-					for line in dependents) if dependents else None)
+	# nominal modifiers;
+	# attempt to measure phrasal complexity (as opposed to clausal complexity).
+	# see e.g. https://doi.org/10.1016/j.jeap.2010.01.001
+	result['NMOD'] = [mean(baserel(line) == 'nmod' for line in sent)
+			for sent in sentences]
+	nominal = [nominalmetrics(sent) for sent in sentences]
+	result['NMODDEPTH'] = [mean(depths) if depths else 0
+			for depths, _, _ in nominal]
+	result['NCOMPRATE'] = [len(participants) / nnouns if nnouns else None
+			for sent, (_, participants, _) in zip(sentences, nominal)
+			for nnouns in [sum(token[UPOS] in NOMINALPOS for token in sent)]]
+	result['NCOMPSIZE'] = [mean(sizes) if sizes else 0
+			for _, _, sizes in nominal]
+	# lexical density: ratio of content words over total number of words
+	# https://aclanthology.org/2020.lrec-1.883
+	result['LXD'] = [sum(line[UPOS] in CONTENTPROPN for line in sent) / len(sent)
+			for sent in sentences]
 	return result
 
 
@@ -525,8 +652,7 @@ def counttags(sentences):
 	"""Count POS, base dependency, and selected morphology features."""
 	numtokens = sum(len(sent) for sent in sentences)
 	postags = Counter(line[UPOS] for sent in sentences for line in sent)
-	deptags = Counter(baserelation(line)
-			for sent in sentences for line in sent)
+	deptags = Counter(baserel(line) for sent in sentences for line in sent)
 	tags = {a: postags[a] / numtokens for a in POSTAGS}
 	tags.update({a: deptags[a] / numtokens for a in DEPTAGS})
 	for feat in VERBFEATS:
@@ -542,8 +668,6 @@ def summarizedmetrics(sentences, lang, lowfreq, highfreq):
 		values = [value for value in values if value is not None]
 		result[name] = ((max(values) if name == 'MAXMDD' else mean(values))
 				if values else None)
-	result.update(documentmetrics(sentences, lang, lowfreq, highfreq))
-	result.update(counttags(sentences))
 	# Pool proportions over the observations they describe instead of giving
 	# every sentence equal weight.
 	tokens = [line for sentence in sentences for line in sentence]
@@ -552,16 +676,27 @@ def summarizedmetrics(sentences, lang, lowfreq, highfreq):
 			if links else None)
 	result['LEFT'] = (mean(line[ID] < line[HEAD] for line in links)
 			if links else None)
-	result['MOD'] = (mean(baserelation(line) == 'nmod' for line in tokens)
-			if tokens else None)
-	content = ('ADJ', 'ADV', 'NOUN', 'PROPN', 'VERB')
-	result['LXD'] = (mean(line[UPOS] in content for line in tokens)
-			if tokens else None)
 	npredicates = sum(predicatecount(sentence) for sentence in sentences)
 	result['CLL'] = len(tokens) / npredicates if npredicates else None
+	analyses = [clauseanalysis(sentence) for sentence in sentences]
+	nclauses = sum(len(clauses) for clauses, _, _, _ in analyses)
+	nsubordinates = sum(sum(depth > 0 for depth in depths.values())
+			for _, depths, _, _ in analyses)
+	result['SUBORD'] = nsubordinates / nclauses if nclauses else None
+	chains = [depth for _, _, _, sentencechains in analyses
+			for depth in sentencechains]
+	result['SUBDEPTH'] = mean(chains) if chains else 0
+	positions = [(tokenid, governor)
+			for clauses, depths, governors, _ in analyses
+			for tokenid in clauses if depths[tokenid] > 0
+			for governor in [governors.get(tokenid)] if governor is not None]
+	result['SUBPRE'] = (mean(tokenid < governor
+			for tokenid, governor in positions) if positions else None)
+	result['SUBPOST'] = (mean(tokenid > governor
+			for tokenid, governor in positions) if positions else None)
 	for relation, before, after in (
 			('nsubj', 'SBJPRE', 'SBJPOST'), ('obj', 'OBJPRE', 'OBJPOST')):
-		dependents = [line for line in tokens if baserelation(line) == relation]
+		dependents = [line for line in tokens if baserel(line) == relation]
 		result[before] = (mean(line[ID] < line[HEAD] for line in dependents)
 				if dependents else None)
 		result[after] = (mean(line[ID] > line[HEAD] for line in dependents)
@@ -573,6 +708,21 @@ def summarizedmetrics(sentences, lang, lowfreq, highfreq):
 		aritycounts = Counter(arities)
 		result.update({f'VBEDGE{arity}': count / len(arities)
 				for arity, count in sorted(aritycounts.items())})
+	result['NMOD'] = (mean(baserel(line) == 'nmod' for line in tokens)
+			if tokens else None)
+	nominal = [nominalmetrics(sentence) for sentence in sentences]
+	depths = [depth for sentdepths, _, _ in nominal for depth in sentdepths]
+	result['NMODDEPTH'] = mean(depths) if depths else 0
+	participants = sum(len(sentparticipants)
+			for _, sentparticipants, _ in nominal)
+	nnouns = sum(token[UPOS] in NOMINALPOS for token in tokens)
+	result['NCOMPRATE'] = participants / nnouns if nnouns else None
+	compounds = [size for _, _, sentsizes in nominal for size in sentsizes]
+	result['NCOMPSIZE'] = mean(compounds) if compounds else 0
+	result['LXD'] = (mean(line[UPOS] in CONTENTPROPN for line in tokens)
+			if tokens else None)
+	result.update(documentmetrics(sentences, lang, lowfreq, highfreq))
+	result.update(counttags(sentences))
 	return result
 
 
@@ -668,10 +818,12 @@ def main():
 		result.to_csv(opts.get('--output'), sep='\t')
 	else:
 		selection = ['NSENT', 'NWORDS', 'WORDLEN', 'LEN', 'LENVAR', 'MDD',
-				'NDD', 'ADJD', 'LEFT', 'DEPTH', 'AVGMDD', 'MAXMDD', 'MOD',
-				'CLS', 'CLL', 'PRED', 'VBROOT', 'PREDROOT', 'VBEDGES',
-				'SBJPRE', 'SBJPOST', 'OBJPRE', 'OBJPOST', 'LXD', 'MTLD',
-				'LOWF', 'HIGHF', 'ZIPF', 'WFCOV']
+				'NDD', 'ADJD', 'LEFT', 'DEPTH', 'AVGMDD', 'MAXMDD',
+				'SUBORD', 'SUBDEPTH', 'SUBPRE', 'SUBPOST', 'CLS', 'CLL',
+				'NMOD', 'NMODDEPTH', 'NCOMPRATE', 'NCOMPSIZE', 'PRED',
+				'VBROOT', 'PREDROOT', 'VBEDGES',
+				'SBJPRE', 'SBJPOST', 'OBJPRE', 'OBJPOST',
+				'LXD', 'MTLD', 'LOWF', 'HIGHF', 'ZIPF', 'WFCOV']
 		print(result.loc[:, selection].round(3).T)  # skip tags
 
 

@@ -238,6 +238,69 @@ def test_example_data():
 	assert result['SBJPOST'] == 0
 	assert result['OBJPRE'] == 0
 	assert result['OBJPOST'] == 1
+	assert result['SUBORD'] == pytest.approx(0.4)
+	assert result['SUBPRE'] == 0
+	assert result['SUBPOST'] == 1
+	assert result['SUBDEPTH'] == 2
+
+
+def test_coordinated_subordinate_clauses_inherit_depth():
+	sent = [
+		[1, 'I', 'I', 'PRON', '_', '_', 2, 'nsubj', '_', '_'],
+		[2, 'know', 'know', 'VERB', '_', '_', 0, 'root', '_', '_'],
+		[3, 'she', 'she', 'PRON', '_', '_', 4, 'nsubj', '_', '_'],
+		[4, 'came', 'come', 'VERB', '_', '_', 2, 'ccomp', '_', '_'],
+		[5, 'and', 'and', 'CCONJ', '_', '_', 6, 'cc', '_', '_'],
+		[6, 'left', 'leave', 'VERB', '_', '_', 4, 'conj', '_', '_'],
+	]
+	metrics = udstyle.summarizedmetrics([sent], 'en', 3.0, 4.0)
+	assert metrics['SUBORD'] == pytest.approx(2 / 3)
+	assert metrics['SUBPRE'] == 0
+	assert metrics['SUBPOST'] == 1
+	assert metrics['SUBDEPTH'] == 1
+
+
+def test_preposed_subordinate_clause():
+	sent = [
+		[1, 'rained', 'rain', 'VERB', '_', '_', 3, 'advcl', '_', '_'],
+		[2, 'we', 'we', 'PRON', '_', '_', 3, 'nsubj', '_', '_'],
+		[3, 'stayed', 'stay', 'VERB', '_', '_', 0, 'root', '_', '_'],
+	]
+	metrics = udstyle.summarizedmetrics([sent], 'en', 3.0, 4.0)
+	assert metrics['SUBORD'] == pytest.approx(0.5)
+	assert metrics['SUBPRE'] == 1
+	assert metrics['SUBPOST'] == 0
+	assert metrics['SUBDEPTH'] == 1
+
+
+def test_nominal_modifier_depth_includes_possessives_and_branching():
+	sent = [
+		[1, 'report', 'report', 'NOUN', '_', '_', 0, 'root', '_', '_'],
+		[2, 'effects', 'effect', 'NOUN', '_', '_', 1, 'nmod', '_', '_'],
+		[3, 'policy', 'policy', 'NOUN', '_', '_', 2, 'nmod', '_', '_'],
+		[4, 'author', 'author', 'NOUN', '_', '_', 1, 'nmod:poss', '_', '_'],
+	]
+	metrics = udstyle.summarizedmetrics([sent], 'en', 3.0, 4.0)
+	assert metrics['NMOD'] == pytest.approx(3 / 4)
+	# The two branches have depths 2 and 1: report is one maximal structure.
+	assert metrics['NMODDEPTH'] == 2
+	assert metrics['NCOMPRATE'] == 0
+	assert metrics['NCOMPSIZE'] == 0
+
+
+def test_nominal_compounds_use_component_size_not_tree_depth():
+	sent = [
+		[1, 'university', 'university', 'NOUN', '_', '_', 3, 'compound', '_', '_'],
+		[2, 'research', 'research', 'NOUN', '_', '_', 3, 'compound', '_', '_'],
+		[3, 'project', 'project', 'NOUN', '_', '_', 0, 'root', '_', '_'],
+		[4, 'language', 'language', 'NOUN', '_', '_', 5, 'compound', '_', '_'],
+		[5, 'acquisition', 'acquisition', 'NOUN', '_', '_', 3, 'nmod', '_', '_'],
+	]
+	metrics = udstyle.summarizedmetrics([sent], 'en', 3.0, 4.0)
+	assert metrics['NMOD'] == pytest.approx(1 / 5)
+	assert metrics['NMODDEPTH'] == 1
+	assert metrics['NCOMPRATE'] == 1
+	assert metrics['NCOMPSIZE'] == pytest.approx((3 + 2) / 2)
 
 
 def test_morphological_feature_distributions_and_coverage():
