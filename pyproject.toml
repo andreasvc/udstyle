@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "udstyle"
+version = "0.1"
+description = "Compute complexity metrics from Universal Dependencies"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+parse = [
+    "stanza",
+]
+
+[tool.setuptools]
+py-modules = ["udstyle"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--disable-plugin-autoload"]
